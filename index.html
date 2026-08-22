@@ -4,13 +4,66 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Karaoke</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    #player { width: 640px; max-width: 100%; aspect-ratio: 16/9; background: #000; }
+    button { font: inherit; padding: 8px 14px; margin-right: 6px; }
+    #readout { font-family: monospace; margin-top: 12px; }
+  </style>
 </head>
 <body>
   <h1>Karaoke</h1>
-  <p id="status">Page is live.</p>
+
+  <!-- The API replaces this div with an iframe -->
+  <div id="player"></div>
+
+  <p>
+    <button id="playBtn">Play</button>
+    <button id="pauseBtn">Pause</button>
+    <button id="seekBtn">Jump to 30s</button>
+  </p>
+  <div id="readout">not ready</div>
 
   <script>
-    document.getElementById('status').textContent = 'Page is live, and JS is running.';
+    // 1. Load YouTube's API script.
+    var tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+
+    var player = null;
+
+    // 2. The API calls this global function itself when it has loaded.
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player('player', {
+        videoId: 'dQw4w9WgXcQ',        // swap for any video you like
+        playerVars: {
+          controls: 0,                 // no scrub bar - we drive it
+          disablekb: 1,
+          rel: 0,
+          playsinline: 1,
+          origin: location.origin
+        },
+        events: {
+          onReady: function () {
+            document.getElementById('readout').textContent = 'ready';
+          },
+          onError: function (e) {
+            document.getElementById('readout').textContent = 'error ' + e.data;
+          }
+        }
+      });
+    }
+
+    document.getElementById('playBtn').onclick  = function () { player.playVideo(); };
+    document.getElementById('pauseBtn').onclick = function () { player.pauseVideo(); };
+    document.getElementById('seekBtn').onclick  = function () { player.seekTo(30, true); };
+
+    // 3. Poll the player's clock - this is what sync will be built on.
+    setInterval(function () {
+      if (!player || !player.getCurrentTime) return;
+      document.getElementById('readout').textContent =
+        'time ' + player.getCurrentTime().toFixed(2) + 's';
+    }, 200);
   </script>
 </body>
 </html>
