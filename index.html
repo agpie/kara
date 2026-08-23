@@ -14,6 +14,7 @@
     }
     button { font: inherit; padding: 8px 14px; margin-right: 6px; }
     #readout { font-family: monospace; margin-top: 12px; white-space: pre; }
+    .nudge { margin-top: 12px; }
   </style>
 </head>
 <body>
@@ -22,35 +23,44 @@
 
   <p>
     <button id="startBtn" disabled>Start song</button>
+    <button id="pauseBtn">Pause</button>
     <button id="stopBtn">Stop</button>
   </p>
-  <div id="readout">loading…</div>
 
+  <div class="nudge">
+    Lyrics:
+    <button data-n="-0.5">−0.5s</button>
+    <button data-n="-0.1">−0.1s</button>
+    <button data-n="0.1">+0.1s</button>
+    <button data-n="0.5">+0.5s</button>
+  </div>
+
+  <div id="readout">loading…</div>
   <div id="instHost"><div id="inst"></div></div>
 
   <script>
-    // lyricStart / instStart = seconds into each video where the SAME
-    // moment of the song happens. Pick one unmistakable landmark and
-    // use it for both - the first sung word is the easiest.
     var SONGS = [
       {
         title: 'Polaroid Love',
         lyricId: 'zVg4HIFVQ2U',
-        lyricStart: 0.5,
+        lyricStart: 2.0,
         instId: '7PvV7EgO__0',
         instStart: 0.5
       }
     ];
 
+    var LOCK_TOL = 0.10;   // tight, while the song settles
+    var RUN_TOL  = 0.28;   // looser once running
+    var LOCK_MS  = 5000;
+
     var song = SONGS[0];
+    var lyric = null, inst = null;
+    var ready = { lyric: false, inst: false };
+    var playing = false, nudge = 0, startedAt = 0, timer = null;
 
     var tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
     document.head.appendChild(tag);
-
-    var lyric = null, inst = null;
-    var ready = { lyric: false, inst: false };
-    var playing = false;
 
     function onYouTubeIframeAPIReady() {
       var vars = {
@@ -69,50 +79,93 @@
         playerVars: vars,
         events: {
           onReady: function () { inst.unMute(); inst.setVolume(80); markReady('inst'); },
+          onStateChange: onInstState,
           onError: function (e) { fail('inst', e.data); }
         }
       });
     }
 
-    function markReady(which) {
-      ready[which] = true;
+    function markReady(w) {
+      ready[w] = true;
       if (ready.lyric && ready.inst) {
         document.getElementById('startBtn').disabled = false;
         document.getElementById('readout').textContent = 'ready';
       }
     }
-    function fail(which, code) {
-      document.getElementById('readout').textContent = which + ' failed: error ' + code;
+    function fail(w, code) {
+      document.getElementById('readout').textContent = w + ' failed: error ' + code;
     }
 
-    document.getElementById('startBtn').onclick = function () {
-      // Each player loads AND seeks in one go, so it buffers from the
-      // right place instead of loading at 0 and jumping.
+    // The instrumental leads; the lyric video follows whatever it does.
+    function onInstState(e) {
+      if (!playing || !ready.lyric) return;
+      var S = YT.PlayerState;
+      if (e.data === S.PLAYING) lyric.playVideo();
+      else if (e.data === S.PAUSED || e.data === S.BUFFERING) lyric.pauseVideo();
+      else if (e.data === S.ENDED) stop();
+    }
+
+    function start() {
+      nudge = 0;
       lyric.loadVideoById({ videoId: song.lyricId, startSeconds: song.lyricStart });
       inst.loadVideoById({ videoId: song.instId,  startSeconds: song.instStart  });
       playing = true;
-    };
-    document.getElementById('stopBtn').onclick = function () {
+      startedAt = performance.now();
+      clearInterval(timer);
+      timer = setInterval(tick, 350);
+    }
+
+    function stop() {
       playing = false;
-      lyric.stopVideo();
-      inst.stopVideo();
-    };
+      clearInterval(timer);
+      timer = null;
+      try { inst.stopVideo(); lyric.stopVideo(); } catch (err) {}
+    }
 
-    setInterval(function () {
-      if (!playing || !ready.lyric || !ready.inst) return;
+    function tick() {
+      if (!playing) return;
+      var it, lt;
+      try { it = inst.getCurrentTime(); lt = lyric.getCurrentTime(); }
+      catch (err) { return; }
 
-      // Convert both players' clocks into "seconds into the song".
-      var songTimeLyric = lyric.getCurrentTime() - song.lyricStart;
-      var songTimeInst  = inst.getCurrentTime()  - song.instStart;
-      var error = songTimeLyric - songTimeInst;
+      var elapsed = it - song.instStart;          // seconds into the song
+      if (elapsed < -1) return;                   // instrumental hasn't reached its start
+      var target = song.lyricStart + nudge + elapsed;
+      if (target < 0) return;
+
+      var drift = lt - target;
+      var tol = (performance.now() - startedAt < LOCK_MS) ? LOCK_TOL : RUN_TOL;
+
+      var corrected = false;
+      if (Math.abs(drift) > tol && inst.getPlayerState() === YT.PlayerState.PLAYING) {
+        lyric.seekTo(target, true);
+        corrected = true;
+      }
 
       document.getElementById('readout').textContent =
-        'song position (from inst) ' + songTimeInst.toFixed(2) + 's\n' +
-        'alignment error           ' + (error >= 0 ? '+' : '') + error.toFixed(2) + 's\n' +
-        (error > 0.15 ? 'lyrics are AHEAD - raise instStart or lower lyricStart'
-       : error < -0.15 ? 'lyrics are BEHIND - lower instStart or raise lyricStart'
-       : 'aligned');
-    }, 200);
+        'song position  ' + elapsed.toFixed(2) + 's\n' +
+        'lyricStart     ' + (song.lyricStart + nudge).toFixed(2) + 's\n' +
+        'drift          ' + (drift >= 0 ? '+' : '') + drift.toFixed(2) + 's' +
+        (corrected ? '  <- corrected' : '');
+    }
+
+    document.getElementById('startBtn').onclick = start;
+    document.getElementById('stopBtn').onclick = stop;
+    document.getElementById('pauseBtn').onclick = function () {
+      if (!playing) return;
+      if (inst.getPlayerState() === YT.PlayerState.PLAYING) inst.pauseVideo();
+      else inst.playVideo();
+    };
+
+    document.querySelector('.nudge').addEventListener('click', function (e) {
+      var n = e.target.dataset.n;
+      if (!n || !playing) return;
+      nudge += parseFloat(n);
+      // jump the lyric video immediately rather than waiting for the next tick
+      try {
+        lyric.seekTo(song.lyricStart + nudge + (inst.getCurrentTime() - song.instStart), true);
+      } catch (err) {}
+    });
   </script>
 </body>
 </html>
