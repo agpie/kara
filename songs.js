@@ -1,19 +1,30 @@
+/* Songbook.
+   offset = how much later the first sung word lands in the instrumental
+   than in the lyric video, in seconds. Positive: the instrumental has the
+   longer intro and starts first. Negative: the lyric video starts first.
+   Both videos always play from their own beginning; nothing is trimmed.
+   end (optional): seconds into the instrumental to stop at. */
+
 var SONGS = [
-      {
-        title: 'Polaroid Love',
-        artist: 'ENHYPEN',
-        lyricId: 'zVg4HIFVQ2U',
-        lyricStart: 2.0,
-        instId: '7PvV7EgO__0',
-        instStart: 0.5
-      },
-      {
-        title: '7 Rings',
-        artist: 'Ariana Grande',
-        lyricId: 'uDAjINEp8H8',
-        lyricStart: 0.0,
-        instId: 'M84fFXooS5w',
-        instStart: 0.0
-      }
-      // add more songs here
-    ];
+  {
+    "title": "Polaroid Love",
+    "artist": "ENHYPEN",
+    "lyricId": "zVg4HIFVQ2U",
+    "instId": "7PvV7EgO__0",
+    "offset": -1.5
+  },
+  {
+    "title": "7 Rings",
+    "artist": "Ariana Grande",
+    "lyricId": "uDAjINEp8H8",
+    "instId": "M84fFXooS5w",
+    "offset": 0
+  },
+  {
+    "title": "Lush Life",
+    "artist": "Zara Larsson",
+    "lyricId": "aAXLhvrfaT8",
+    "instId": "tD4HCZe-tew",
+    "offset": 1.28
+  }
+];
