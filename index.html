@@ -31,7 +31,6 @@
   #osd.show { opacity: 1; }
   #osd .sub { font-size: 13px; font-weight: 400; color: #9a97c4; margin-top: 2px; }
 
-  /* progress bar */
   #progress { position: relative; height: 30px; background: #0b0b1c;
               border-radius: 0 0 4px 4px; overflow: hidden; }
   #progFill { position: absolute; inset: 0 auto 0 0; width: 0;
@@ -94,6 +93,7 @@
   .badge { display: inline-block; font-size: 10px; letter-spacing: .08em;
            text-transform: uppercase; color: #f0b429; border: 1px solid #6b5417;
            border-radius: 2px; padding: 0 4px; margin-left: 6px; vertical-align: 2px; }
+  .badge.t { color: #7bd0c4; border-color: #1f5c55; }
 
   #addPanel { margin-top: 18px; padding-top: 14px; border-top: 1px solid #2a2850; }
   .step { display: none; }
@@ -153,10 +153,11 @@
       <button class="nudge" data-n="-0.1">−0.1s</button>
       <button class="nudge" data-n="0.1">+0.1s</button>
       <button class="nudge" data-n="0.5">+0.5s</button>
+      <button id="resetBtn" disabled>Reset offset</button>
       <div style="margin-top:10px">
         <button id="copyBtn">Copy songs.js</button>
         <button id="dlBtn">Download songs.js</button>
-        <button id="forgetBtn" class="danger">Forget added songs</button>
+        <button id="forgetBtn" class="danger">Forget local changes</button>
       </div>
       <div id="unsaved" hidden></div>
       <div id="readout"></div>
@@ -232,6 +233,7 @@
   var QUEUE_KEY = 'karaoke.queue';
   var VOL_KEY   = 'karaoke.volume';
   var MINE_KEY  = 'karaoke.mysongs';
+  var TWEAK_KEY = 'karaoke.tweaks';
 
   var HEADER =
     '/* Songbook.\n' +
@@ -243,11 +245,12 @@
 
   var lyric = null, inst = null;
   var ready = { lyric: false, inst: false };
-  var current = null, nudge = 0, startedAt = 0, timer = null, watchdog = null;
+  var current = null, startedAt = 0, timer = null, watchdog = null;
   var pre = null, instStarted = false, lyricStarted = false;
   var queue = [], uidSeq = 0, restored = false;
 
   var mine = [], BOOK = [], mineKeys = {};
+  var tweaks = {}, ORIGINAL = {};
   var addState = null, draft = null, tapL = 0, tapI = 0;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -259,39 +262,40 @@
     var m = Math.floor(sec / 60), s = Math.floor(sec % 60);
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
-  // Old entries used lyricStart/instStart; derive the offset from them.
-  function normalise(s) {
-    var o = {};
-    for (var k in s) if (s.hasOwnProperty(k)) o[k] = s[k];
-    if (typeof o.offset !== 'number') {
-      o.offset = +(((+o.instStart) || 0) - ((+o.lyricStart) || 0)).toFixed(2);
-    }
-    delete o.lyricStart; delete o.instStart;
-    return o;
-  }
-  function effOffset() { return current.offset - nudge; }
 
   var tag = document.createElement('script');
   tag.src = 'https://www.youtube.com/iframe_api';
   document.head.appendChild(tag);
 
+  // Captions reappear with every loadVideoById, so this runs on each play.
+  function killCaptions(p) {
+    try { p.unloadModule('captions'); } catch (err) {}
+    try { p.unloadModule('cc'); } catch (err) {}
+  }
+
   function onYouTubeIframeAPIReady() {
     var vars = {
       controls: 0, disablekb: 1, rel: 0, fs: 0,
-      modestbranding: 1, iv_load_policy: 3,
+      modestbranding: 1, iv_load_policy: 3, cc_load_policy: 0,
       playsinline: 1, origin: location.origin
     };
     lyric = new YT.Player('lyric', {
       playerVars: vars,
       events: {
-        onReady: function () { lyric.mute(); markReady('lyric'); },
+        onReady: function () { lyric.mute(); killCaptions(lyric); markReady('lyric'); },
+        onStateChange: function (e) {
+          if (e.data === YT.PlayerState.PLAYING) killCaptions(lyric);
+        },
         onError: function (e) { fail('lyric', e.data); }
       }
     });
     inst = new YT.Player('inst', {
       playerVars: vars,
       events: {
-        onReady: function () { inst.unMute(); inst.setVolume(+$('vol').value); markReady('inst'); },
+        onReady: function () {
+          inst.unMute(); inst.setVolume(+$('vol').value);
+          killCaptions(inst); markReady('inst');
+        },
         onStateChange: onInstState,
         onError: function (e) { fail('instrumental', e.data); }
       }
@@ -320,11 +324,29 @@
     openTuner();
   }
 
+  /* ---------- offsets tweaked on this device ---------- */
+  function loadTweaks() {
+    try { tweaks = JSON.parse(localStorage.getItem(TWEAK_KEY) || '{}') || {}; }
+    catch (err) { tweaks = {}; }
+    SONGS.forEach(function (s) { ORIGINAL[songKey(s)] = s.offset; });
+    // Once songs.js catches up with a tweak, the tweak is redundant.
+    Object.keys(tweaks).forEach(function (k) {
+      if (ORIGINAL[k] === tweaks[k]) delete tweaks[k];
+    });
+    saveTweaks();
+  }
+  function saveTweaks() {
+    try { localStorage.setItem(TWEAK_KEY, JSON.stringify(tweaks)); } catch (err) {}
+  }
+  function noteTweak(song) {
+    tweaks[songKey(song)] = song.offset;
+    saveTweaks();
+  }
+
   /* ---------- the book ---------- */
   function loadMine() {
     try { mine = JSON.parse(localStorage.getItem(MINE_KEY) || '[]'); } catch (err) { mine = []; }
     if (!Array.isArray(mine)) mine = [];
-    mine = mine.map(normalise);
     var global = {};
     SONGS.forEach(function (s) { global[songKey(s)] = true; });
     mine = mine.filter(function (s) { return !global[songKey(s)]; });
@@ -335,8 +357,14 @@
     rebuildBook();
   }
   function rebuildBook() {
+    SONGS.forEach(function (s) {
+      if (typeof s.offset !== 'number') {
+        console.warn('songs.js: "' + s.title + '" has no numeric offset');
+      }
+    });
+
     var seen = {}; BOOK = []; mineKeys = {};
-    SONGS.map(normalise).forEach(function (s) {
+    SONGS.forEach(function (s) {
       var k = songKey(s);
       if (!seen[k]) { seen[k] = true; BOOK.push(s); }
     });
@@ -344,9 +372,18 @@
       var k = songKey(s);
       if (!seen[k]) { seen[k] = true; mineKeys[k] = true; BOOK.push(s); }
     });
-    var n = mine.length;
-    $('unsaved').hidden = n === 0;
-    $('unsaved').textContent = n + (n === 1 ? ' song is' : ' songs are') +
+
+    BOOK.forEach(function (s) {
+      var t = tweaks[songKey(s)];
+      if (typeof t === 'number') s.offset = t;
+    });
+
+    var n = mine.length, t = Object.keys(tweaks).length;
+    var bits = [];
+    if (n) bits.push(n + (n === 1 ? ' new song' : ' new songs'));
+    if (t) bits.push(t + (t === 1 ? ' retimed song' : ' retimed songs'));
+    $('unsaved').hidden = bits.length === 0;
+    $('unsaved').textContent = bits.join(' and ') +
       ' only on this device. Copy or download songs.js and commit it.';
   }
   function exportText() {
@@ -391,9 +428,11 @@
     });
     $('noMatch').hidden = matches.length > 0;
     matches.forEach(function (song) {
+      var k = songKey(song);
       var li = document.createElement('li'), b = document.createElement('button');
       b.innerHTML = '<strong>' + esc(song.title) + '</strong>' +
-        (mineKeys[songKey(song)] ? '<span class="badge">unsaved</span>' : '') +
+        (mineKeys[k] ? '<span class="badge">unsaved</span>' : '') +
+        (tweaks[k] !== undefined ? '<span class="badge t">retimed</span>' : '') +
         '<div class="artist">' + esc(song.artist) + '</div>';
       b.onclick = function () { enqueue(song); };
       li.appendChild(b); el.appendChild(li);
@@ -470,7 +509,7 @@
 
   function play(song) {
     if (!ready.lyric || !ready.inst) return;
-    current = song; nudge = 0; restored = false;
+    current = song; restored = false;
     clearInterval(pre); pre = null;
     instStarted = false; lyricStarted = false;
 
@@ -483,6 +522,7 @@
     $('resume').hidden = true;
     $('progFill').style.width = '0%';
     $('progTime').textContent = '0:00';
+    refreshResetBtn();
 
     lyric.mute();
     inst.setVolume(+$('vol').value);
@@ -490,15 +530,13 @@
     showOsd(song.title, song.artist || '');
     updateNextLabel();
 
-    // Both videos start at their own zero; the one that needs to wait, waits.
+    // Both videos start at their own zero; whichever needs to wait, waits.
     if (song.offset >= 0) {
-      // Instrumental has the longer intro: it leads, lyric video joins later.
       inst.loadVideoById({ videoId: song.instId, startSeconds: 0 });
       lyric.cueVideoById({ videoId: song.lyricId, startSeconds: 0 });
       instStarted = true;
       armWatchdog();
     } else {
-      // Lyric video has the longer intro: it leads, silently, until the backing drops in.
       lyric.loadVideoById({ videoId: song.lyricId, startSeconds: 0 });
       inst.cueVideoById({ videoId: song.instId, startSeconds: 0 });
       lyricStarted = true;
@@ -514,7 +552,7 @@
     if (!current || instStarted) { clearInterval(pre); pre = null; return; }
     var lt;
     try { lt = lyric.getCurrentTime(); } catch (err) { return; }
-    if (lt >= -effOffset()) {
+    if (lt >= -current.offset) {
       clearInterval(pre); pre = null;
       instStarted = true;
       inst.playVideo();
@@ -541,24 +579,21 @@
     $('readout').textContent = '';
     $('progFill').style.width = '0%';
     $('progTime').textContent = '—';
+    refreshResetBtn();
     drawQueue();
   }
 
   function tick() {
     if (!current) return;
 
-    if (!instStarted) {          // lyric video is still running its intro alone
-      $('progTime').textContent = 'Intro…';
-      return;
-    }
+    if (!instStarted) { $('progTime').textContent = 'Intro…'; return; }
 
     var it, lt;
     try { it = inst.getCurrentTime(); lt = lyric.getCurrentTime(); } catch (err) { return; }
     if (current.end && it >= current.end) { advance(); return; }
 
-    var off = effOffset();
+    var off = current.offset;
 
-    // Bring the lyric video in once the instrumental has caught up to it.
     if (!lyricStarted) {
       if (it >= off) { lyricStarted = true; lyric.seekTo(0, true); lyric.playVideo(); }
       else { paintProgress(it); return; }
@@ -594,17 +629,29 @@
   /* ---------- shared actions ---------- */
   function togglePause() {
     if (!current) return;
-    // Before the backing track joins, the lyric video is the only thing running.
     var p = instStarted ? inst : lyric;
     if (p.getPlayerState() === YT.PlayerState.PLAYING) p.pauseVideo();
     else p.playVideo();
   }
+
+  // A nudge now edits the song itself and is remembered.
   function applyNudge(d) {
     if (!current) return;
-    nudge += d;
+    current.offset = +(current.offset - d).toFixed(2);
+    if (addState !== 'review') {
+      if (mineKeys[songKey(current)]) saveMine();   // local songs store their own offset
+      else noteTweak(current);                      // committed songs get an override
+      refreshResetBtn();
+      drawList();
+    }
     if (!instStarted || !lyricStarted) return;
-    try { lyric.seekTo(inst.getCurrentTime() - effOffset(), true); } catch (err) {}
+    try { lyric.seekTo(inst.getCurrentTime() - current.offset, true); } catch (err) {}
   }
+
+  function refreshResetBtn() {
+    $('resetBtn').disabled = !(current && tweaks[songKey(current)] !== undefined);
+  }
+
   function setVolume(v) {
     v = Math.max(0, Math.min(100, Math.round(v)));
     $('vol').value = v; $('volVal').textContent = v;
@@ -729,7 +776,7 @@
     var saved = {
       title: draft.title, artist: draft.artist,
       lyricId: draft.lyricId, instId: draft.instId,
-      offset: +effOffset().toFixed(2)
+      offset: +draft.offset.toFixed(2)
     };
     mine.push(saved); saveMine(); endAdd(true); drawList();
     showOsd('Saved: ' + saved.title, 'Not yet in songs.js');
@@ -754,8 +801,23 @@
   document.querySelectorAll('.nudge').forEach(function (b) {
     b.onclick = function () { applyNudge(parseFloat(b.dataset.n)); };
   });
+
+  $('resetBtn').onclick = function () {
+    if (!current) return;
+    var k = songKey(current);
+    if (tweaks[k] === undefined) return;
+    if (typeof ORIGINAL[k] === 'number') current.offset = ORIGINAL[k];
+    delete tweaks[k];
+    saveTweaks();
+    rebuildBook();
+    refreshResetBtn();
+    drawList();
+    if (instStarted && lyricStarted) {
+      try { lyric.seekTo(inst.getCurrentTime() - current.offset, true); } catch (err) {}
+    }
+  };
+
   $('copyBtn').onclick = function () {
-    if (current && addState !== 'review') { current.offset = +effOffset().toFixed(2); nudge = 0; }
     var text = exportText();
     navigator.clipboard.writeText(text).then(
       function () { $('copyBtn').textContent = 'Copied'; },
@@ -772,10 +834,17 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   };
   $('forgetBtn').onclick = function () {
-    if (!mine.length) return;
-    if (!window.confirm('Delete ' + mine.length + ' song(s) added on this device? ' +
-                        'Anything already committed to songs.js is unaffected.')) return;
-    mine = []; saveMine(); drawList();
+    var n = mine.length, t = Object.keys(tweaks).length;
+    if (!n && !t) return;
+    if (!window.confirm('Discard ' + n + ' added song(s) and ' + t + ' offset change(s) ' +
+                        'made on this device? songs.js itself is unaffected.')) return;
+    mine = []; tweaks = {};
+    saveTweaks();
+    SONGS.forEach(function (s) {
+      if (typeof ORIGINAL[songKey(s)] === 'number') s.offset = ORIGINAL[songKey(s)];
+    });
+    saveMine();
+    drawList(); refreshResetBtn();
   };
 
   document.addEventListener('keydown', function (e) {
@@ -801,6 +870,7 @@
     if (savedVol !== null) $('vol').value = savedVol;
   } catch (err) {}
   setVolume(+$('vol').value);
+  loadTweaks();
   loadMine();
   restoreQueue();
   checkForm();
