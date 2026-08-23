@@ -6,30 +6,30 @@
   <title>Karaoke</title>
   <style>
     * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, sans-serif; margin: 0;
-      background: #14142c; color: #eceafa;
-    }
+    body { font-family: system-ui, sans-serif; margin: 0; background: #14142c; color: #eceafa; }
     h1 { font-size: 20px; margin: 0; padding: 14px 20px; background: #0b0b1c; }
     h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em;
          color: #9a97c4; margin: 0 0 10px; }
 
-    .room { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 20px; padding: 20px; }
+    .room { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 20px; padding: 20px; }
     .panel { min-width: 0; }
 
     #screen { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 4px; overflow: hidden; }
     #screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-    #shield { position: absolute; inset: 0; }
-    #idle { position: absolute; inset: 0; display: grid; place-content: center;
+    #shield { position: absolute; inset: 0; z-index: 2; }
+    #idle { position: absolute; inset: 0; z-index: 2; display: grid; place-content: center;
             text-align: center; color: #6f6c9c; font-size: 15px; padding: 20px; }
     #screen:fullscreen { aspect-ratio: auto; width: 100%; height: 100%; border-radius: 0; }
 
-    #osd {
-      position: absolute; left: 20px; bottom: 20px; max-width: 70%;
-      padding: 10px 16px; background: rgba(11,11,28,.82); border-radius: 4px;
-      font-size: 18px; font-weight: 600;
-      opacity: 0; transition: opacity .4s; pointer-events: none;
-    }
+    /* Instrumental: rendered at all times so the browser never throttles it,
+       but invisible - except while capturing its offset. */
+    #instHost { position: absolute; left: 0; bottom: 0; width: 200px; height: 112px;
+                opacity: .001; pointer-events: none; z-index: 1; }
+    #instHost.is-capturing { inset: 0; width: 100%; height: 100%; opacity: 1; z-index: 3; }
+
+    #osd { position: absolute; left: 20px; bottom: 20px; max-width: 70%; z-index: 4;
+           padding: 10px 16px; background: rgba(11,11,28,.82); border-radius: 4px;
+           font-size: 18px; font-weight: 600; opacity: 0; transition: opacity .4s; pointer-events: none; }
     #osd.show { opacity: 1; }
     #osd .sub { font-size: 13px; font-weight: 400; color: #9a97c4; margin-top: 2px; }
 
@@ -42,6 +42,7 @@
     button:hover:not(:disabled) { border-color: #7b78d0; }
     button:disabled { opacity: .4; cursor: not-allowed; }
     .danger { border-color: #a33; color: #ff9a9a; }
+    .go { border-color: #7b78d0; background: #34317a; }
 
     .vol { display: inline-flex; align-items: center; gap: 8px; margin: 0 6px 6px 0;
            padding: 8px 12px; border: 1px solid #3a3770; border-radius: 3px; }
@@ -55,6 +56,7 @@
     #tuner button { padding: 6px 10px; font-size: 13px; }
     #readout { font-family: ui-monospace, monospace; font-size: 12px;
                white-space: pre; color: #9a97c4; margin-top: 8px; }
+    #unsaved { color: #f0b429; font-size: 13px; margin-top: 10px; }
 
     #keyhelp { color: #6f6c9c; font-size: 12px; margin-top: 12px; line-height: 2; }
     kbd { font-family: ui-monospace, monospace; font-size: 11px; background: #262452;
@@ -69,23 +71,31 @@
     #queue button { padding: 3px 9px; margin: 0; font-size: 13px; }
     #queueEmpty { color: #6f6c9c; font-size: 14px; }
 
-    #search {
-      width: 100%; margin-bottom: 10px; padding: 9px 12px;
-      background: #0b0b1c; color: #eceafa;
-      border: 1px solid #3a3770; border-radius: 3px; font: inherit;
-    }
-    #search::placeholder { color: #6f6c9c; }
+    #search, .field { width: 100%; margin-bottom: 8px; padding: 9px 12px;
+      background: #0b0b1c; color: #eceafa; border: 1px solid #3a3770;
+      border-radius: 3px; font: inherit; }
+    #search::placeholder, .field::placeholder { color: #6f6c9c; }
     #noMatch { color: #6f6c9c; font-size: 14px; }
 
-    #list { list-style: none; padding: 0; margin: 0; max-height: 70vh; overflow-y: auto; }
+    #list { list-style: none; padding: 0; margin: 0; max-height: 46vh; overflow-y: auto; }
     #list button { display: block; width: 100%; text-align: left; margin: 0 0 6px; }
     #list .artist { color: #9a97c4; font-size: 13px; }
+    .badge { display: inline-block; font-size: 10px; letter-spacing: .08em;
+             text-transform: uppercase; color: #f0b429; border: 1px solid #6b5417;
+             border-radius: 2px; padding: 0 4px; margin-left: 6px; vertical-align: 2px; }
 
-    #instHost { position: fixed; left: 0; bottom: 0; width: 200px; height: 112px;
-                opacity: .001; pointer-events: none; z-index: -1; }
+    #addPanel { margin-top: 18px; padding-top: 14px; border-top: 1px solid #2a2850; }
+    .step { display: none; }
+    .step.on { display: block; }
+    .tap { width: 100%; padding: 18px; font-size: 16px; border-color: #7b78d0; background: #34317a; }
+    .hintline { color: #6f6c9c; font-size: 13px; line-height: 1.5; margin: 0 0 10px; }
+    .stat { font-family: ui-monospace, monospace; font-size: 12px; color: #9a97c4; margin: 8px 0; }
+    .stat b { color: #eceafa; }
+    .err { color: #ff9a9a; font-size: 13px; margin: 8px 0; }
+
     [hidden] { display: none !important; }
 
-    @media (max-width: 820px) {
+    @media (max-width: 880px) {
       .room { grid-template-columns: 1fr; }
       #list { max-height: none; }
       #keyhelp { display: none; }
@@ -97,10 +107,10 @@
   <h1>Karaoke</h1>
 
   <div class="room">
-    <!-- MAIN: what's playing, and what's next -->
     <section class="panel">
       <div id="screen">
         <div id="lyric"></div>
+        <div id="instHost"><div id="inst"></div></div>
         <div id="shield"></div>
         <div id="idle">Pick a song from the list to start</div>
         <div id="osd"></div>
@@ -129,7 +139,12 @@
         <button class="nudge" data-n="-0.1">−0.1s</button>
         <button class="nudge" data-n="0.1">+0.1s</button>
         <button class="nudge" data-n="0.5">+0.5s</button>
-        <button id="copyBtn">Copy songbook</button>
+        <div style="margin-top:10px">
+          <button id="copyBtn">Copy songs.js</button>
+          <button id="dlBtn">Download songs.js</button>
+          <button id="forgetBtn" class="danger">Forget added songs</button>
+        </div>
+        <div id="unsaved" hidden></div>
         <div id="readout"></div>
       </div>
 
@@ -146,33 +161,89 @@
       <button id="clearBtn" hidden>Clear queue</button>
     </section>
 
-    <!-- SIDE: the songbook -->
     <aside class="panel">
       <h2>Songs</h2>
       <input id="search" type="search" placeholder="Search songs…" autocomplete="off">
       <p id="loading">loading…</p>
       <p id="noMatch" hidden>No songs match that.</p>
       <ul id="list"></ul>
+
+      <div id="addPanel">
+        <h2>Add a song</h2>
+
+        <!-- step 1: links -->
+        <div class="step on" id="stepForm">
+          <p class="hintline">Find a lyric video and an instrumental on YouTube, then paste both links.</p>
+          <input class="field" id="fTitle" type="text" placeholder="Title" autocomplete="off">
+          <input class="field" id="fArtist" type="text" placeholder="Artist" autocomplete="off">
+          <input class="field" id="fLyric" type="text" placeholder="Lyric video URL" autocomplete="off">
+          <input class="field" id="fInst" type="text" placeholder="Instrumental URL" autocomplete="off">
+          <div class="stat" id="fStat"></div>
+          <button class="go" id="beginBtn" disabled>Check the videos</button>
+          <a id="ytLink" href="#" target="_blank" rel="noopener" hidden></a>
+        </div>
+
+        <!-- step 2: lyric offset -->
+        <div class="step" id="stepLyric">
+          <p class="hintline">Playing the <b>lyric video</b>. Tap the moment the first sung word lands.</p>
+          <button class="tap" id="tapLyric">Tap on the first word</button>
+          <div class="stat" id="lyricStat"></div>
+          <button id="replayLyric">Restart video</button>
+          <button id="cancelA" class="danger">Cancel</button>
+          <div class="err" id="errLyric"></div>
+        </div>
+
+        <!-- step 3: instrumental offset -->
+        <div class="step" id="stepInst">
+          <p class="hintline">Now the <b>instrumental</b>. Tap where that same word would land.</p>
+          <button class="tap" id="tapInst">Tap on the first word</button>
+          <div class="stat" id="instStat"></div>
+          <button id="replayInst">Restart video</button>
+          <button id="backLyric">Redo lyric</button>
+          <button id="cancelB" class="danger">Cancel</button>
+          <div class="err" id="errInst"></div>
+        </div>
+
+        <!-- step 4: approve -->
+        <div class="step" id="stepReview">
+          <p class="hintline">Both playing together. Fine-tune with Tune if needed, then approve.</p>
+          <div class="stat" id="reviewStat"></div>
+          <button class="go" id="approveBtn">Sounds right — save it</button>
+          <button id="redoBtn">Redo timings</button>
+          <button id="cancelC" class="danger">Discard</button>
+        </div>
+      </div>
     </aside>
   </div>
-
-  <div id="instHost"><div id="inst"></div></div>
 
   <script src="songs.js"></script>
   <script>
     var LOCK_TOL = 0.10, RUN_TOL = 0.28, LOCK_MS = 5000;
-
-    // Queue lives for the tab (survives refresh, gone tomorrow).
-    // Volume is a preference, so it sticks.
     var QUEUE_KEY = 'karaoke.queue';
     var VOL_KEY   = 'karaoke.volume';
+    var MINE_KEY  = 'karaoke.mysongs';
+
+    var HEADER =
+      '/* Songbook. lyricStart / instStart are the seconds into each video\n' +
+      '   where the first sung word lands; the stagger is derived from them.\n' +
+      '   Generated by the Add a song panel - safe to hand-edit. */\n\n';
 
     var lyric = null, inst = null;
     var ready = { lyric: false, inst: false };
     var current = null, nudge = 0, startedAt = 0, timer = null, watchdog = null;
     var queue = [], uidSeq = 0, restored = false;
 
+    var mine = [];          // songs added on this device, not yet in songs.js
+    var BOOK = [];          // SONGS + mine, deduped
+    var mineKeys = {};      // for the badge
+
+    var addState = null;    // null | 'lyric' | 'inst' | 'review'
+    var draft = null;
+
     var $ = function (id) { return document.getElementById(id); };
+    function songKey(s) { return s.lyricId + '|' + s.instId; }
+    function esc(t) { return String(t == null ? '' : t)
+      .replace(/[<>&]/g, function (c) { return { '<':'&lt;', '>':'&gt;', '&':'&amp;' }[c]; }); }
 
     var tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
@@ -196,7 +267,7 @@
         events: {
           onReady: function () { inst.unMute(); inst.setVolume(+$('vol').value); markReady('inst'); },
           onStateChange: onInstState,
-          onError: function (e) { fail('inst', e.data); }
+          onError: function (e) { fail('instrumental', e.data); }
         }
       });
     }
@@ -207,70 +278,110 @@
       $('loading').hidden = true;
       drawList();
       drawQueue();
-      // Only now is it safe to offer Skip - play() bails if the players aren't up.
       $('skipBtn').disabled = queue.length === 0;
       if (restored && queue.length) {
         $('idle').textContent = 'Queue restored from before the refresh. Press Skip to start.';
       }
     }
-    function fail(w, code) {
-      $('readout').textContent = w + ' video failed: error ' + code +
-        (code === 101 || code === 150 ? ' (embedding disabled - use a different upload)' : '');
+
+    function errText(which, code) {
+      return which + ' video failed: error ' + code +
+        (code === 101 || code === 150 ? ' — embedding is disabled on it, pick another upload.' : '');
+    }
+    function fail(which, code) {
+      // During the add flow this is the embeddability check, so route it there.
+      if (addState === 'lyric') { $('errLyric').textContent = errText(which, code); return; }
+      if (addState === 'inst')  { $('errInst').textContent  = errText(which, code); return; }
+      $('readout').textContent = errText(which, code);
       $('tuner').hidden = false;
     }
 
-    /* ---------- persistence ---------- */
-    // Songs have no ids, so identify them by their two video ids.
-    function songKey(s) { return s.lyricId + '|' + s.instId; }
-
-    function saveQueue() {
-      try {
-        // The song playing right now goes back on the front, so a refresh
-        // mid-song leaves it as the next thing up rather than losing it.
-        var pending = (current ? [current] : []).concat(
-          queue.map(function (item) { return item.song; })
-        );
-        sessionStorage.setItem(QUEUE_KEY, JSON.stringify(pending.map(songKey)));
-      } catch (err) {}   // private mode, storage full - not worth interrupting anyone over
+    /* ---------- the book ---------- */
+    function loadMine() {
+      try { mine = JSON.parse(localStorage.getItem(MINE_KEY) || '[]'); } catch (err) { mine = []; }
+      if (!Array.isArray(mine)) mine = [];
+      // Anything already committed to songs.js is no longer a local addition.
+      var global = {};
+      SONGS.forEach(function (s) { global[songKey(s)] = true; });
+      mine = mine.filter(function (s) { return !global[songKey(s)]; });
+      saveMine();
+    }
+    function saveMine() {
+      try { localStorage.setItem(MINE_KEY, JSON.stringify(mine)); } catch (err) {}
+      rebuildBook();
+    }
+    function rebuildBook() {
+      var seen = {};
+      BOOK = []; mineKeys = {};
+      SONGS.forEach(function (s) {
+        var k = songKey(s);
+        if (seen[k]) return;
+        seen[k] = true; BOOK.push(s);
+      });
+      mine.forEach(function (s) {
+        var k = songKey(s);
+        if (seen[k]) return;
+        seen[k] = true; mineKeys[k] = true; BOOK.push(s);
+      });
+      var n = mine.length;
+      $('unsaved').hidden = n === 0;
+      $('unsaved').textContent = n + (n === 1 ? ' song is' : ' songs are') +
+        ' only on this device. Copy or download songs.js and commit it.';
     }
 
+    function exportText() {
+      var out = BOOK.map(function (s) {
+        var o = {
+          title: s.title, artist: s.artist || '',
+          lyricId: s.lyricId, lyricStart: +(+s.lyricStart).toFixed(2),
+          instId: s.instId, instStart: +(+s.instStart).toFixed(2)
+        };
+        if (s.end) o.end = s.end;
+        if (s.note) o.note = s.note;
+        return o;
+      });
+      return HEADER + 'var SONGS = ' + JSON.stringify(out, null, 2) + ';\n';
+    }
+
+    /* ---------- persistence ---------- */
+    function saveQueue() {
+      try {
+        var pending = (current && addState !== 'review' ? [current] : [])
+          .concat(queue.map(function (i) { return i.song; }));
+        sessionStorage.setItem(QUEUE_KEY, JSON.stringify(pending.map(songKey)));
+      } catch (err) {}
+    }
     function restoreQueue() {
       var raw = null;
       try { raw = sessionStorage.getItem(QUEUE_KEY); } catch (err) { return; }
       if (!raw) return;
-
       var keys;
       try { keys = JSON.parse(raw); } catch (err) { return; }
       if (!Array.isArray(keys)) return;
-
       var index = {};
-      SONGS.forEach(function (s) { index[songKey(s)] = s; });
-
+      BOOK.forEach(function (s) { index[songKey(s)] = s; });
       keys.forEach(function (k) {
-        var song = index[k];
-        if (song) queue.push({ uid: ++uidSeq, song: song });   // silently drop songs since removed
+        if (index[k]) queue.push({ uid: ++uidSeq, song: index[k] });
       });
       restored = queue.length > 0;
     }
 
-    /* ---------- songbook ---------- */
+    /* ---------- songbook list ---------- */
     function drawList() {
       var q = $('search').value.trim().toLowerCase();
       var el = $('list');
       el.innerHTML = '';
-
-      var matches = SONGS.filter(function (song) {
+      var matches = BOOK.filter(function (s) {
         if (!q) return true;
-        return (song.title + ' ' + (song.artist || '')).toLowerCase().indexOf(q) !== -1;
+        return (s.title + ' ' + (s.artist || '')).toLowerCase().indexOf(q) !== -1;
       });
-
       $('noMatch').hidden = matches.length > 0;
-
       matches.forEach(function (song) {
         var li = document.createElement('li');
         var b = document.createElement('button');
-        b.innerHTML = '<strong>' + song.title + '</strong>' +
-                      '<div class="artist">' + (song.artist || '') + '</div>';
+        b.innerHTML = '<strong>' + esc(song.title) + '</strong>' +
+          (mineKeys[songKey(song)] ? '<span class="badge">unsaved</span>' : '') +
+          '<div class="artist">' + esc(song.artist) + '</div>';
         b.onclick = function () { enqueue(song); };
         li.appendChild(b);
         el.appendChild(li);
@@ -278,46 +389,34 @@
     }
 
     /* ---------- queue ---------- */
-    // Every pick goes on the queue. If nothing is playing, this click is also
-    // the user gesture that lets the unmuted backing track start.
     function enqueue(song) {
+      if (addState) return;                  // don't disturb an add in progress
       queue.push({ uid: ++uidSeq, song: song });
-      if (!current) advance();
-      else drawQueue();
+      if (!current) advance(); else drawQueue();
     }
 
-    // Every queue mutation ends up here, so this is where the save belongs.
     function drawQueue() {
       var el = $('queue');
       el.innerHTML = '';
       $('queueEmpty').hidden = queue.length > 0;
       $('clearBtn').hidden = queue.length === 0;
-
       queue.forEach(function (item, i) {
         var li = document.createElement('li');
-
         var pos = document.createElement('span');
-        pos.className = 'pos';
-        pos.textContent = (i + 1) + '.';
-
+        pos.className = 'pos'; pos.textContent = (i + 1) + '.';
         var name = document.createElement('span');
         name.className = 'name';
-        name.innerHTML = '<strong>' + item.song.title + '</strong>' +
-                         '<div class="artist">' + (item.song.artist || '') + '</div>';
-
+        name.innerHTML = '<strong>' + esc(item.song.title) + '</strong>' +
+                         '<div class="artist">' + esc(item.song.artist) + '</div>';
         var up = document.createElement('button');
-        up.textContent = '↑';
-        up.disabled = (i === 0);
+        up.textContent = '↑'; up.disabled = (i === 0);
         up.onclick = function () { queue.splice(i - 1, 0, queue.splice(i, 1)[0]); drawQueue(); };
-
         var rm = document.createElement('button');
         rm.textContent = '✕';
         rm.onclick = function () { queue.splice(i, 1); drawQueue(); };
-
         li.appendChild(pos); li.appendChild(name); li.appendChild(up); li.appendChild(rm);
         el.appendChild(li);
       });
-
       saveQueue();
     }
 
@@ -334,7 +433,7 @@
       var S = YT.PlayerState;
       if (e.data === S.PLAYING) { lyric.playVideo(); $('resume').hidden = true; }
       else if (e.data === S.PAUSED || e.data === S.BUFFERING) lyric.pauseVideo();
-      else if (e.data === S.ENDED) advance();
+      else if (e.data === S.ENDED) { if (addState === 'review') stop(); else advance(); }
       $('pauseBtn').textContent = (e.data === S.PAUSED) ? 'Resume' : 'Pause';
     }
 
@@ -351,12 +450,13 @@
       $('stopBtn').disabled = false;
       $('resume').hidden = true;
 
+      lyric.mute();
       inst.setVolume(+$('vol').value);
-      closeTuner();
+      if (addState !== 'review') closeTuner();
       showOsd(song.title, song.artist || '');
 
       lyric.loadVideoById({ videoId: song.lyricId, startSeconds: Math.max(0, song.lyricStart) });
-      inst.loadVideoById({ videoId: song.instId,  startSeconds: Math.max(0, song.instStart)  });
+      inst.loadVideoById({ videoId: song.instId,  startSeconds: Math.max(0, song.instStart) });
 
       startedAt = performance.now();
       clearInterval(timer);
@@ -370,11 +470,10 @@
       }, 2500);
     }
 
-    // Stops playback. Leaves the queue alone - that's what Clear queue is for.
     function stop() {
       clearInterval(timer); timer = null;
       clearTimeout(watchdog);
-      current = null;                    // set BEFORE stopVideo, so the ENDED it fires is ignored
+      current = null;
       try { inst.stopVideo(); lyric.stopVideo(); } catch (err) {}
       $('idle').hidden = false;
       $('idle').textContent = queue.length ? 'Stopped. Press Skip to play the next song.'
@@ -393,26 +492,26 @@
     function tick() {
       if (!current) return;
       var it, lt;
-      try { it = inst.getCurrentTime(); lt = lyric.getCurrentTime(); }
-      catch (err) { return; }
-
+      try { it = inst.getCurrentTime(); lt = lyric.getCurrentTime(); } catch (err) { return; }
       if (current.end && it >= current.end) { advance(); return; }
-
       var elapsed = it - current.instStart;
       if (elapsed < -1) return;
       var target = current.lyricStart + nudge + elapsed;
       if (target < 0) return;
-
       var drift = lt - target;
       var tol = (performance.now() - startedAt < LOCK_MS) ? LOCK_TOL : RUN_TOL;
       if (Math.abs(drift) > tol && inst.getPlayerState() === YT.PlayerState.PLAYING) {
         lyric.seekTo(target, true);
       }
-
       $('readout').textContent =
-        'position  ' + elapsed.toFixed(2) + 's   ' +
-        'lyricStart ' + (current.lyricStart + nudge).toFixed(2) + 's   ' +
-        'drift ' + (drift >= 0 ? '+' : '') + drift.toFixed(2) + 's';
+        'position ' + elapsed.toFixed(2) + 's   lyricStart ' +
+        (current.lyricStart + nudge).toFixed(2) + 's   drift ' +
+        (drift >= 0 ? '+' : '') + drift.toFixed(2) + 's';
+      if (addState === 'review') {
+        $('reviewStat').innerHTML =
+          'lyricStart <b>' + (draft.lyricStart + nudge).toFixed(2) + 's</b> · ' +
+          'instStart <b>' + draft.instStart.toFixed(2) + 's</b>';
+      }
     }
 
     /* ---------- shared actions ---------- */
@@ -421,37 +520,27 @@
       if (inst.getPlayerState() === YT.PlayerState.PLAYING) inst.pauseVideo();
       else inst.playVideo();
     }
-
-    function applyNudge(delta) {
+    function applyNudge(d) {
       if (!current) return;
-      nudge += delta;
-      try {
-        lyric.seekTo(current.lyricStart + nudge + (inst.getCurrentTime() - current.instStart), true);
-      } catch (err) {}
+      nudge += d;
+      try { lyric.seekTo(current.lyricStart + nudge + (inst.getCurrentTime() - current.instStart), true); }
+      catch (err) {}
     }
-
     function setVolume(v) {
       v = Math.max(0, Math.min(100, Math.round(v)));
-      $('vol').value = v;
-      $('volVal').textContent = v;
+      $('vol').value = v; $('volVal').textContent = v;
       if (ready.inst) inst.setVolume(v);
       try { localStorage.setItem(VOL_KEY, v); } catch (err) {}
     }
-
-    function closeTuner() {
-      $('tuner').hidden = true;
-      $('tuneBtn').classList.remove('is-open');
-    }
-
-    // In fullscreen the video covers the page, so flash the title on screen.
+    function closeTuner() { $('tuner').hidden = true; $('tuneBtn').classList.remove('is-open'); }
+    function openTuner() { $('tuner').hidden = false; $('tuneBtn').classList.add('is-open'); }
     function showOsd(title, sub) {
-      $('osd').innerHTML = '<div>' + title + '</div>' +
-                           (sub ? '<div class="sub">' + sub + '</div>' : '');
+      $('osd').innerHTML = '<div>' + esc(title) + '</div>' +
+                           (sub ? '<div class="sub">' + esc(sub) + '</div>' : '');
       $('osd').classList.add('show');
       clearTimeout(showOsd.t);
       showOsd.t = setTimeout(function () { $('osd').classList.remove('show'); }, 4000);
     }
-
     function toggleFullscreen() {
       var el = $('screen');
       if (document.fullscreenElement || document.webkitFullscreenElement) {
@@ -461,53 +550,193 @@
       }
     }
 
+    /* ---------- add a song ---------- */
+    function parseId(s) {
+      s = (s || '').trim();
+      if (/^[\w-]{11}$/.test(s)) return s;
+      var m = s.match(/(?:v=|\/embed\/|youtu\.be\/|\/shorts\/|\/live\/)([\w-]{11})/);
+      return m ? m[1] : null;
+    }
+
+    function showStep(name) {
+      ['stepForm', 'stepLyric', 'stepInst', 'stepReview'].forEach(function (id) {
+        $(id).classList.toggle('on', id === name);
+      });
+    }
+
+    function checkForm() {
+      var t = $('fTitle').value.trim();
+      var l = parseId($('fLyric').value), i = parseId($('fInst').value);
+      var msgs = [];
+      if ($('fLyric').value.trim() && !l) msgs.push('Lyric link not recognised.');
+      if ($('fInst').value.trim() && !i) msgs.push('Instrumental link not recognised.');
+      if (l && i && l === i) msgs.push('Both links are the same video.');
+      $('fStat').textContent = msgs.join(' ') || (l && i ? 'Ready: ' + l + ' / ' + i : '');
+      $('beginBtn').disabled = !(t && l && i && l !== i);
+
+      var q = (t + ' ' + $('fArtist').value.trim()).trim();
+      $('ytLink').hidden = !q;
+      if (q) {
+        $('ytLink').href = 'https://www.youtube.com/results?search_query=' +
+                           encodeURIComponent(q + ' instrumental');
+        $('ytLink').textContent = 'Search YouTube for "' + q + '"';
+      }
+    }
+
+    function beginAdd() {
+      if (!ready.lyric || !ready.inst) return;
+      stop();
+      draft = {
+        title: $('fTitle').value.trim(),
+        artist: $('fArtist').value.trim(),
+        lyricId: parseId($('fLyric').value),
+        lyricStart: 0,
+        instId: parseId($('fInst').value),
+        instStart: 0
+      };
+      captureLyric();
+    }
+
+    function captureLyric() {
+      addState = 'lyric';
+      $('errLyric').textContent = '';
+      $('lyricStat').textContent = '';
+      showStep('stepLyric');
+      $('idle').hidden = true;
+      $('instHost').classList.remove('is-capturing');
+      inst.stopVideo();
+      lyric.unMute();                       // you need to hear it to place the word
+      lyric.setVolume(+$('vol').value);
+      lyric.loadVideoById({ videoId: draft.lyricId, startSeconds: 0 });
+    }
+
+    function captureInst() {
+      addState = 'inst';
+      $('errInst').textContent = '';
+      $('instStat').textContent = '';
+      showStep('stepInst');
+      lyric.stopVideo();
+      lyric.mute();
+      $('instHost').classList.add('is-capturing');   // reveal it just for this step
+      inst.loadVideoById({ videoId: draft.instId, startSeconds: 0 });
+    }
+
+    function reviewDraft() {
+      addState = 'review';
+      $('instHost').classList.remove('is-capturing');
+      showStep('stepReview');
+      openTuner();
+      play(draft);
+    }
+
+    function endAdd(keep) {
+      addState = null;
+      draft = null;
+      $('instHost').classList.remove('is-capturing');
+      lyric.mute();
+      showStep('stepForm');
+      closeTuner();
+      stop();
+      if (!keep) return;
+      $('fTitle').value = ''; $('fArtist').value = '';
+      $('fLyric').value = ''; $('fInst').value = '';
+      checkForm();
+    }
+
+    $('fTitle').oninput = $('fArtist').oninput = $('fLyric').oninput = $('fInst').oninput = checkForm;
+    $('beginBtn').onclick = beginAdd;
+
+    $('tapLyric').onclick = function () {
+      var t;
+      try { t = lyric.getCurrentTime(); } catch (err) { return; }
+      draft.lyricStart = Math.max(0, +t.toFixed(2));
+      $('lyricStat').innerHTML = 'lyricStart <b>' + draft.lyricStart.toFixed(2) + 's</b>';
+      setTimeout(captureInst, 400);
+    };
+    $('replayLyric').onclick = function () { lyric.seekTo(0, true); lyric.playVideo(); };
+    $('tapInst').onclick = function () {
+      var t;
+      try { t = inst.getCurrentTime(); } catch (err) { return; }
+      draft.instStart = Math.max(0, +t.toFixed(2));
+      $('instStat').innerHTML = 'instStart <b>' + draft.instStart.toFixed(2) + 's</b>';
+      setTimeout(reviewDraft, 400);
+    };
+    $('replayInst').onclick = function () { inst.seekTo(0, true); inst.playVideo(); };
+    $('backLyric').onclick = captureLyric;
+    $('cancelA').onclick = $('cancelB').onclick = $('cancelC').onclick = function () { endAdd(false); };
+    $('redoBtn').onclick = function () { closeTuner(); captureLyric(); };
+
+    $('approveBtn').onclick = function () {
+      var saved = {
+        title: draft.title, artist: draft.artist,
+        lyricId: draft.lyricId, lyricStart: +(draft.lyricStart + nudge).toFixed(2),
+        instId: draft.instId, instStart: +draft.instStart.toFixed(2)
+      };
+      mine.push(saved);
+      saveMine();
+      endAdd(true);
+      drawList();
+      showOsd('Saved: ' + saved.title, 'Not yet in songs.js');
+    };
+
     /* ---------- controls ---------- */
     $('pauseBtn').onclick = togglePause;
     $('skipBtn').onclick = advance;
-    $('stopBtn').onclick = stop;
+    $('stopBtn').onclick = function () { if (addState) endAdd(false); else stop(); };
     $('fsBtn').onclick = toggleFullscreen;
     $('clearBtn').onclick = function () { queue = []; drawQueue(); };
     $('resume').onclick = function () { $('resume').hidden = true; inst.playVideo(); };
     $('vol').oninput = function () { setVolume(+this.value); };
-
     $('search').oninput = drawList;
     $('search').onkeydown = function (e) {
       if (e.key === 'Escape') { this.value = ''; drawList(); this.blur(); }
     };
-
     $('tuneBtn').onclick = function () {
-      var open = $('tuner').hidden;
-      $('tuner').hidden = !open;
-      $('tuneBtn').classList.toggle('is-open', open);
+      if ($('tuner').hidden) openTuner(); else closeTuner();
     };
-
     document.addEventListener('fullscreenchange', function () {
       $('fsBtn').textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
     });
-
     document.querySelectorAll('.nudge').forEach(function (b) {
       b.onclick = function () { applyNudge(parseFloat(b.dataset.n)); };
     });
 
     $('copyBtn').onclick = function () {
-      if (current) { current.lyricStart = +(current.lyricStart + nudge).toFixed(2); nudge = 0; }
-      var text = 'var SONGS = ' + JSON.stringify(SONGS, null, 2) + ';';
+      if (current && addState !== 'review') {
+        current.lyricStart = +(current.lyricStart + nudge).toFixed(2);
+        nudge = 0;
+      }
+      var text = exportText();
       navigator.clipboard.writeText(text).then(
         function () { $('copyBtn').textContent = 'Copied'; },
-        function () { window.prompt('Copy this:', text); }
+        function () { window.prompt('Copy this into songs.js:', text); }
       );
-      setTimeout(function () { $('copyBtn').textContent = 'Copy songbook'; }, 2000);
+      setTimeout(function () { $('copyBtn').textContent = 'Copy songs.js'; }, 2000);
+    };
+    $('dlBtn').onclick = function () {
+      var blob = new Blob([exportText()], { type: 'text/javascript' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = 'songs.js';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    };
+    $('forgetBtn').onclick = function () {
+      if (!mine.length) return;
+      if (!window.confirm('Delete ' + mine.length + ' song(s) added on this device? ' +
+                          'Anything already committed to songs.js is unaffected.')) return;
+      mine = [];
+      saveMine();
+      drawList();
     };
 
     document.addEventListener('keydown', function (e) {
-      // Don't hijack keys while the slider or a text field has focus.
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-
       switch (e.key) {
         case ' ':           e.preventDefault(); togglePause(); break;
-        case 'Escape':      if (current) stop(); break;
-        case 'n': case 'N': if (current || queue.length) advance(); break;
+        case 'Escape':      if (addState) endAdd(false); else if (current) stop(); break;
+        case 'n': case 'N': if (!addState && (current || queue.length)) advance(); break;
         case 'ArrowUp':     e.preventDefault(); setVolume(+$('vol').value + 5); break;
         case 'ArrowDown':   e.preventDefault(); setVolume(+$('vol').value - 5); break;
         case 't': case 'T': $('tuneBtn').click(); break;
@@ -524,7 +753,9 @@
       if (savedVol !== null) $('vol').value = savedVol;
     } catch (err) {}
     setVolume(+$('vol').value);
+    loadMine();
     restoreQueue();
+    checkForm();
   </script>
 </body>
 </html>
