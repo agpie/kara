@@ -15,69 +15,69 @@
     button { font: inherit; padding: 8px 14px; margin-right: 6px; }
     #readout { font-family: monospace; margin-top: 12px; white-space: pre; }
     #list { list-style: none; padding: 0; max-width: 640px; }
-    #list button {
+    #list > li > button {
       display: block; width: 100%; text-align: left;
       padding: 12px 14px; margin: 0 0 6px; cursor: pointer;
     }
-    #list .artist { color: #666; font-size: 14px; }
+    .artist { color: #666; font-size: 14px; }
+    #queue { list-style: none; padding: 0; max-width: 640px; }
+    #queue li {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 0; border-bottom: 1px solid #ddd;
+    }
+    #queue .pos { font-family: monospace; color: #666; width: 2em; }
+    #queue .name { flex: 1; }
+    #queue button { padding: 4px 9px; margin: 0; }
+    #resume { padding: 16px 22px; }
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <h1>Karaoke</h1>
 
-  <!-- catalogue -->
   <section id="catalogue">
     <p id="loading">loading…</p>
     <ul id="list"></ul>
+
+    <h2>Queue</h2>
+    <p id="queueEmpty">Nothing queued. Pick a song above.</p>
+    <ol id="queue"></ol>
+    <button id="clearBtn">Clear queue</button>
   </section>
 
-  <!-- player -->
   <section id="stage" hidden>
     <h2 id="nowTitle"></h2>
     <div id="lyric"></div>
+    <p id="upNext"></p>
     <p>
       <button id="pauseBtn">Pause</button>
+      <button id="skipBtn">Skip</button>
       <button id="stopBtn">Back to songs</button>
     </p>
+    <p><button id="resume" hidden>Tap to start the song</button></p>
     <div>
       Lyrics:
       <button class="nudge" data-n="-0.5">−0.5s</button>
       <button class="nudge" data-n="-0.1">−0.1s</button>
       <button class="nudge" data-n="0.1">+0.1s</button>
       <button class="nudge" data-n="0.5">+0.5s</button>
+      <button id="copyBtn">Copy songbook</button>
     </div>
     <div id="readout"></div>
   </section>
 
   <div id="instHost"><div id="inst"></div></div>
 
+  <script src="songs.js"></script>
   <script>
-    var SONGS = [
-      {
-        title: 'Polaroid Love',
-        artist: 'ENHYPEN',
-        lyricId: 'zVg4HIFVQ2U',
-        lyricStart: 2.0,          // <- put your tuned number here
-        instId: '7PvV7EgO__0',
-        instStart: 0.5
-      },
-      {
-        title: '7 Rings',
-        artist: 'Ariana Grande',
-        lyricId: 'uDAjINEp8H8',
-        lyricStart: 0.0,          // <- put your tuned number here
-        instId: 'M84fFXooS5w',
-        instStart: 0.0
-      }
-      // add more songs here
-    ];
-
     var LOCK_TOL = 0.10, RUN_TOL = 0.28, LOCK_MS = 5000;
 
     var lyric = null, inst = null;
     var ready = { lyric: false, inst: false };
-    var current = null, nudge = 0, startedAt = 0, timer = null;
+    var current = null, nudge = 0, startedAt = 0, timer = null, watchdog = null;
+
+    var queue = [];   // [{ uid, song }] - uid lets the same song sit in it twice
+    var uidSeq = 0;
 
     var $ = function (id) { return document.getElementById(id); };
 
@@ -110,34 +110,86 @@
 
     function markReady(w) {
       ready[w] = true;
-      if (ready.lyric && ready.inst) {
-        $('loading').hidden = true;
-        drawList();
-      }
+      if (ready.lyric && ready.inst) { $('loading').hidden = true; drawList(); drawQueue(); }
     }
     function fail(w, code) {
       $('readout').textContent = w + ' video failed: error ' + code +
         (code === 101 || code === 150 ? ' (embedding disabled - use a different upload)' : '');
     }
 
+    /* ---------- catalogue ---------- */
     function drawList() {
-      SONGS.forEach(function (song, i) {
+      SONGS.forEach(function (song) {
         var li = document.createElement('li');
         var b = document.createElement('button');
         b.innerHTML = '<strong>' + song.title + '</strong>' +
                       '<div class="artist">' + (song.artist || '') + '</div>';
-        b.onclick = function () { play(song); };
+        b.onclick = function () { enqueue(song); };
         li.appendChild(b);
         $('list').appendChild(li);
       });
     }
 
+    /* ---------- queue ---------- */
+    function enqueue(song) {
+      queue.push({ uid: ++uidSeq, song: song });
+      drawQueue();
+      // Nothing playing? This click is the user gesture, so start right now.
+      if (!current) advance();
+    }
+
+    function drawQueue() {
+      var el = $('queue');
+      el.innerHTML = '';
+      $('queueEmpty').hidden = queue.length > 0;
+
+      queue.forEach(function (item, i) {
+        var li = document.createElement('li');
+
+        var pos = document.createElement('span');
+        pos.className = 'pos';
+        pos.textContent = (i + 1) + '.';
+
+        var name = document.createElement('span');
+        name.className = 'name';
+        name.innerHTML = '<strong>' + item.song.title + '</strong> ' +
+                         '<span class="artist">' + (item.song.artist || '') + '</span>';
+
+        var up = document.createElement('button');
+        up.textContent = '↑';
+        up.disabled = (i === 0);
+        up.onclick = function () {
+          queue.splice(i - 1, 0, queue.splice(i, 1)[0]);
+          drawQueue();
+        };
+
+        var rm = document.createElement('button');
+        rm.textContent = '✕';
+        rm.onclick = function () { queue.splice(i, 1); drawQueue(); };
+
+        li.appendChild(pos); li.appendChild(name); li.appendChild(up); li.appendChild(rm);
+        el.appendChild(li);
+      });
+
+      $('upNext').textContent = queue.length
+        ? 'Up next: ' + queue[0].song.title + (queue.length > 1 ? '  (+' + (queue.length - 1) + ' more)' : '')
+        : 'Nothing queued after this';
+    }
+
+    function advance() {
+      var item = queue.shift();
+      drawQueue();
+      if (!item) { stop(); return; }
+      play(item.song);
+    }
+
+    /* ---------- playback ---------- */
     function onInstState(e) {
       if (!current || !ready.lyric) return;
       var S = YT.PlayerState;
-      if (e.data === S.PLAYING) lyric.playVideo();
+      if (e.data === S.PLAYING) { lyric.playVideo(); $('resume').hidden = true; }
       else if (e.data === S.PAUSED || e.data === S.BUFFERING) lyric.pauseVideo();
-      else if (e.data === S.ENDED) stop();
+      else if (e.data === S.ENDED) advance();
       $('pauseBtn').textContent = (e.data === S.PAUSED) ? 'Resume' : 'Pause';
     }
 
@@ -148,6 +200,7 @@
       $('catalogue').hidden = true;
       $('stage').hidden = false;
       $('nowTitle').textContent = song.title;
+      $('resume').hidden = true;
 
       lyric.loadVideoById({ videoId: song.lyricId, startSeconds: Math.max(0, song.lyricStart) });
       inst.loadVideoById({ videoId: song.instId,  startSeconds: Math.max(0, song.instStart)  });
@@ -155,16 +208,27 @@
       startedAt = performance.now();
       clearInterval(timer);
       timer = setInterval(tick, 350);
+
+      // If the browser refused to autoplay the unmuted track, offer a tap.
+      clearTimeout(watchdog);
+      watchdog = setTimeout(function () {
+        if (!current) return;
+        var s = inst.getPlayerState();
+        if (s !== YT.PlayerState.PLAYING && s !== YT.PlayerState.BUFFERING) {
+          $('resume').hidden = false;
+        }
+      }, 2500);
     }
 
     function stop() {
-      clearInterval(timer);
-      timer = null;
+      clearInterval(timer); timer = null;
+      clearTimeout(watchdog);
+      current = null;                       // set first, so the ENDED below is ignored
       try { inst.stopVideo(); lyric.stopVideo(); } catch (err) {}
-      current = null;
       $('stage').hidden = true;
       $('catalogue').hidden = false;
       $('pauseBtn').textContent = 'Pause';
+      $('resume').hidden = true;
     }
 
     function tick() {
@@ -172,6 +236,8 @@
       var it, lt;
       try { it = inst.getCurrentTime(); lt = lyric.getCurrentTime(); }
       catch (err) { return; }
+
+      if (current.end && it >= current.end) { advance(); return; }
 
       var elapsed = it - current.instStart;
       if (elapsed < -1) return;
@@ -190,7 +256,12 @@
         'drift          ' + (drift >= 0 ? '+' : '') + drift.toFixed(2) + 's';
     }
 
+    /* ---------- controls ---------- */
     $('stopBtn').onclick = stop;
+    $('skipBtn').onclick = advance;
+    $('clearBtn').onclick = function () { queue = []; drawQueue(); };
+    $('resume').onclick = function () { $('resume').hidden = true; inst.playVideo(); };
+
     $('pauseBtn').onclick = function () {
       if (!current) return;
       if (inst.getPlayerState() === YT.PlayerState.PLAYING) inst.pauseVideo();
@@ -206,6 +277,16 @@
         } catch (err) {}
       };
     });
+
+    $('copyBtn').onclick = function () {
+      if (current) { current.lyricStart = +(current.lyricStart + nudge).toFixed(2); nudge = 0; }
+      var text = 'var SONGS = ' + JSON.stringify(SONGS, null, 2) + ';';
+      navigator.clipboard.writeText(text).then(
+        function () { $('copyBtn').textContent = 'Copied'; },
+        function () { window.prompt('Copy this:', text); }
+      );
+      setTimeout(function () { $('copyBtn').textContent = 'Copy songbook'; }, 2000);
+    };
   </script>
 </body>
 </html>
