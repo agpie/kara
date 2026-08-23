@@ -22,6 +22,16 @@
     #shield { position: absolute; inset: 0; }
     #idle { position: absolute; inset: 0; display: grid; place-content: center;
             text-align: center; color: #6f6c9c; font-size: 15px; }
+    #screen:fullscreen { aspect-ratio: auto; width: 100%; height: 100%; border-radius: 0; }
+
+    #osd {
+      position: absolute; left: 20px; bottom: 20px; max-width: 70%;
+      padding: 10px 16px; background: rgba(11,11,28,.82); border-radius: 4px;
+      font-size: 18px; font-weight: 600;
+      opacity: 0; transition: opacity .4s; pointer-events: none;
+    }
+    #osd.show { opacity: 1; }
+    #osd .sub { font-size: 13px; font-weight: 400; color: #9a97c4; margin-top: 2px; }
 
     #nowTitle { font-size: 22px; font-weight: 600; margin: 14px 0 2px; }
     #nowArtist { color: #9a97c4; font-size: 14px; margin: 0 0 12px; }
@@ -59,6 +69,14 @@
     #queue button { padding: 3px 9px; margin: 0; font-size: 13px; }
     #queueEmpty { color: #6f6c9c; font-size: 14px; }
 
+    #search {
+      width: 100%; margin-bottom: 10px; padding: 9px 12px;
+      background: #0b0b1c; color: #eceafa;
+      border: 1px solid #3a3770; border-radius: 3px; font: inherit;
+    }
+    #search::placeholder { color: #6f6c9c; }
+    #noMatch { color: #6f6c9c; font-size: 14px; }
+
     #list { list-style: none; padding: 0; margin: 0; max-height: 70vh; overflow-y: auto; }
     #list button { display: block; width: 100%; text-align: left; margin: 0 0 6px; }
     #list .artist { color: #9a97c4; font-size: 13px; }
@@ -72,6 +90,7 @@
       #list { max-height: none; }
       #keyhelp { display: none; }
     }
+    @media (prefers-reduced-motion: reduce) { #osd { transition: none; } }
   </style>
 </head>
 <body>
@@ -84,6 +103,7 @@
         <div id="lyric"></div>
         <div id="shield"></div>
         <div id="idle">Pick a song from the list to start</div>
+        <div id="osd"></div>
       </div>
 
       <div id="nowTitle">Nothing playing</div>
@@ -99,6 +119,7 @@
           <span class="val" id="volVal">80</span>
         </span>
         <button id="tuneBtn">Tune</button>
+        <button id="fsBtn">Fullscreen</button>
         <button id="resume" hidden>Tap to start the song</button>
       </div>
 
@@ -115,7 +136,8 @@
       <div id="keyhelp">
         <kbd>space</kbd> pause · <kbd>N</kbd> skip · <kbd>esc</kbd> stop ·
         <kbd>↑</kbd> <kbd>↓</kbd> volume · <kbd>T</kbd> tune ·
-        <kbd>[</kbd> <kbd>]</kbd> nudge lyrics
+        <kbd>[</kbd> <kbd>]</kbd> nudge lyrics · <kbd>F</kbd> fullscreen ·
+        <kbd>/</kbd> search
       </div>
 
       <h2 style="margin-top:24px">Up next</h2>
@@ -127,7 +149,9 @@
     <!-- SIDE: the songbook -->
     <aside class="panel">
       <h2>Songs</h2>
+      <input id="search" type="search" placeholder="Search songs…" autocomplete="off">
       <p id="loading">loading…</p>
+      <p id="noMatch" hidden>No songs match that.</p>
       <ul id="list"></ul>
     </aside>
   </div>
@@ -184,14 +208,25 @@
 
     /* ---------- songbook ---------- */
     function drawList() {
-      SONGS.forEach(function (song) {
+      var q = $('search').value.trim().toLowerCase();
+      var el = $('list');
+      el.innerHTML = '';
+
+      var matches = SONGS.filter(function (song) {
+        if (!q) return true;
+        return (song.title + ' ' + (song.artist || '')).toLowerCase().indexOf(q) !== -1;
+      });
+
+      $('noMatch').hidden = matches.length > 0;
+
+      matches.forEach(function (song) {
         var li = document.createElement('li');
         var b = document.createElement('button');
         b.innerHTML = '<strong>' + song.title + '</strong>' +
                       '<div class="artist">' + (song.artist || '') + '</div>';
         b.onclick = function () { enqueue(song); };
         li.appendChild(b);
-        $('list').appendChild(li);
+        el.appendChild(li);
       });
     }
 
@@ -267,6 +302,7 @@
 
       inst.setVolume(+$('vol').value);
       closeTuner();
+      showOsd(song.title, song.artist || '');
 
       lyric.loadVideoById({ videoId: song.lyricId, startSeconds: Math.max(0, song.lyricStart) });
       inst.loadVideoById({ videoId: song.instId,  startSeconds: Math.max(0, song.instStart)  });
@@ -355,19 +391,47 @@
       $('tuneBtn').classList.remove('is-open');
     }
 
+    // In fullscreen the video covers the page, so flash the title on screen.
+    function showOsd(title, sub) {
+      $('osd').innerHTML = '<div>' + title + '</div>' +
+                           (sub ? '<div class="sub">' + sub + '</div>' : '');
+      $('osd').classList.add('show');
+      clearTimeout(showOsd.t);
+      showOsd.t = setTimeout(function () { $('osd').classList.remove('show'); }, 4000);
+    }
+
+    function toggleFullscreen() {
+      var el = $('screen');
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      } else {
+        (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+      }
+    }
+
     /* ---------- controls ---------- */
     $('pauseBtn').onclick = togglePause;
     $('skipBtn').onclick = advance;
     $('stopBtn').onclick = stop;
+    $('fsBtn').onclick = toggleFullscreen;
     $('clearBtn').onclick = function () { queue = []; drawQueue(); };
     $('resume').onclick = function () { $('resume').hidden = true; inst.playVideo(); };
     $('vol').oninput = function () { setVolume(+this.value); };
+
+    $('search').oninput = drawList;
+    $('search').onkeydown = function (e) {
+      if (e.key === 'Escape') { this.value = ''; drawList(); this.blur(); }
+    };
 
     $('tuneBtn').onclick = function () {
       var open = $('tuner').hidden;
       $('tuner').hidden = !open;
       $('tuneBtn').classList.toggle('is-open', open);
     };
+
+    document.addEventListener('fullscreenchange', function () {
+      $('fsBtn').textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+    });
 
     document.querySelectorAll('.nudge').forEach(function (b) {
       b.onclick = function () { applyNudge(parseFloat(b.dataset.n)); };
@@ -397,6 +461,8 @@
         case 't': case 'T': $('tuneBtn').click(); break;
         case '[':           applyNudge(-0.1); break;
         case ']':           applyNudge(0.1); break;
+        case 'f': case 'F': toggleFullscreen(); break;
+        case '/':           e.preventDefault(); $('search').focus(); break;
       }
     });
 
