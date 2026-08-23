@@ -7,14 +7,10 @@
   <style>
     body { font-family: system-ui, sans-serif; margin: 24px; }
     #lyric { width: 640px; max-width: 100%; aspect-ratio: 16/9; background: #000; }
-
-    /* The instrumental. On-screen, but invisible. See note below. */
     #instHost {
       position: fixed; left: 0; bottom: 0;
       width: 200px; height: 112px;
-      opacity: 0.001;
-      pointer-events: none;
-      z-index: -1;
+      opacity: 0.001; pointer-events: none; z-index: -1;
     }
     button { font: inherit; padding: 8px 14px; margin-right: 6px; }
     #readout { font-family: monospace; margin-top: 12px; white-space: pre; }
@@ -22,20 +18,31 @@
 </head>
 <body>
   <h1>Karaoke</h1>
-
   <div id="lyric"></div>
 
   <p>
-    <button id="startBtn" disabled>Start both</button>
-    <button id="stopBtn">Stop both</button>
+    <button id="startBtn" disabled>Start song</button>
+    <button id="stopBtn">Stop</button>
   </p>
   <div id="readout">loading…</div>
 
   <div id="instHost"><div id="inst"></div></div>
 
   <script>
-    var LYRIC_ID = 'dQw4w9WgXcQ';   // seen, muted
-    var INST_ID  = 'M84fFXooS5w';  // heard, hidden — any second video for now
+    // lyricStart / instStart = seconds into each video where the SAME
+    // moment of the song happens. Pick one unmistakable landmark and
+    // use it for both - the first sung word is the easiest.
+    var SONGS = [
+      {
+        title: 'Polaroid Love',
+        lyricId: 'NU5mFeTcJSo',
+        lyricStart: 0.5,
+        instId: '7PvV7EgO__0',
+        instStart: 0.5
+      }
+    ];
+
+    var song = SONGS[0];
 
     var tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
@@ -43,6 +50,7 @@
 
     var lyric = null, inst = null;
     var ready = { lyric: false, inst: false };
+    var playing = false;
 
     function onYouTubeIframeAPIReady() {
       var vars = {
@@ -50,18 +58,14 @@
         modestbranding: 1, iv_load_policy: 3,
         playsinline: 1, origin: location.origin
       };
-
       lyric = new YT.Player('lyric', {
-        videoId: LYRIC_ID,
         playerVars: vars,
         events: {
           onReady: function () { lyric.mute(); markReady('lyric'); },
           onError: function (e) { fail('lyric', e.data); }
         }
       });
-
       inst = new YT.Player('inst', {
-        videoId: INST_ID,
         playerVars: vars,
         events: {
           onReady: function () { inst.unMute(); inst.setVolume(80); markReady('inst'); },
@@ -72,30 +76,42 @@
 
     function markReady(which) {
       ready[which] = true;
-      if (ready.lyric && ready.inst) document.getElementById('startBtn').disabled = false;
+      if (ready.lyric && ready.inst) {
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('readout').textContent = 'ready';
+      }
     }
     function fail(which, code) {
       document.getElementById('readout').textContent = which + ' failed: error ' + code;
     }
 
-    // Both play calls happen inside the click, which is what satisfies
-    // the browser's autoplay rules for the unmuted instrumental.
     document.getElementById('startBtn').onclick = function () {
-      lyric.playVideo();
-      inst.playVideo();
+      // Each player loads AND seeks in one go, so it buffers from the
+      // right place instead of loading at 0 and jumping.
+      lyric.loadVideoById({ videoId: song.lyricId, startSeconds: song.lyricStart });
+      inst.loadVideoById({ videoId: song.instId,  startSeconds: song.instStart  });
+      playing = true;
     };
     document.getElementById('stopBtn').onclick = function () {
+      playing = false;
       lyric.stopVideo();
       inst.stopVideo();
     };
 
     setInterval(function () {
-      if (!ready.lyric || !ready.inst) return;
-      var l = lyric.getCurrentTime(), i = inst.getCurrentTime();
+      if (!playing || !ready.lyric || !ready.inst) return;
+
+      // Convert both players' clocks into "seconds into the song".
+      var songTimeLyric = lyric.getCurrentTime() - song.lyricStart;
+      var songTimeInst  = inst.getCurrentTime()  - song.instStart;
+      var error = songTimeLyric - songTimeInst;
+
       document.getElementById('readout').textContent =
-        'lyric ' + l.toFixed(2) + 's\n' +
-        'inst  ' + i.toFixed(2) + 's\n' +
-        'gap   ' + (l - i).toFixed(2) + 's';
+        'song position (from inst) ' + songTimeInst.toFixed(2) + 's\n' +
+        'alignment error           ' + (error >= 0 ? '+' : '') + error.toFixed(2) + 's\n' +
+        (error > 0.15 ? 'lyrics are AHEAD - raise instStart or lower lyricStart'
+       : error < -0.15 ? 'lyrics are BEHIND - lower instStart or raise lyricStart'
+       : 'aligned');
     }, 200);
   </script>
 </body>
