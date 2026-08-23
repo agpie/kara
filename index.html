@@ -21,7 +21,7 @@
     #screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
     #shield { position: absolute; inset: 0; }
     #idle { position: absolute; inset: 0; display: grid; place-content: center;
-            text-align: center; color: #6f6c9c; font-size: 15px; }
+            text-align: center; color: #6f6c9c; font-size: 15px; padding: 20px; }
     #screen:fullscreen { aspect-ratio: auto; width: 100%; height: 100%; border-radius: 0; }
 
     #osd {
@@ -162,10 +162,15 @@
   <script>
     var LOCK_TOL = 0.10, RUN_TOL = 0.28, LOCK_MS = 5000;
 
+    // Queue lives for the tab (survives refresh, gone tomorrow).
+    // Volume is a preference, so it sticks.
+    var QUEUE_KEY = 'karaoke.queue';
+    var VOL_KEY   = 'karaoke.volume';
+
     var lyric = null, inst = null;
     var ready = { lyric: false, inst: false };
     var current = null, nudge = 0, startedAt = 0, timer = null, watchdog = null;
-    var queue = [], uidSeq = 0;
+    var queue = [], uidSeq = 0, restored = false;
 
     var $ = function (id) { return document.getElementById(id); };
 
@@ -198,12 +203,54 @@
 
     function markReady(w) {
       ready[w] = true;
-      if (ready.lyric && ready.inst) { $('loading').hidden = true; drawList(); drawQueue(); }
+      if (!ready.lyric || !ready.inst) return;
+      $('loading').hidden = true;
+      drawList();
+      drawQueue();
+      // Only now is it safe to offer Skip - play() bails if the players aren't up.
+      $('skipBtn').disabled = queue.length === 0;
+      if (restored && queue.length) {
+        $('idle').textContent = 'Queue restored from before the refresh. Press Skip to start.';
+      }
     }
     function fail(w, code) {
       $('readout').textContent = w + ' video failed: error ' + code +
         (code === 101 || code === 150 ? ' (embedding disabled - use a different upload)' : '');
       $('tuner').hidden = false;
+    }
+
+    /* ---------- persistence ---------- */
+    // Songs have no ids, so identify them by their two video ids.
+    function songKey(s) { return s.lyricId + '|' + s.instId; }
+
+    function saveQueue() {
+      try {
+        // The song playing right now goes back on the front, so a refresh
+        // mid-song leaves it as the next thing up rather than losing it.
+        var pending = (current ? [current] : []).concat(
+          queue.map(function (item) { return item.song; })
+        );
+        sessionStorage.setItem(QUEUE_KEY, JSON.stringify(pending.map(songKey)));
+      } catch (err) {}   // private mode, storage full - not worth interrupting anyone over
+    }
+
+    function restoreQueue() {
+      var raw = null;
+      try { raw = sessionStorage.getItem(QUEUE_KEY); } catch (err) { return; }
+      if (!raw) return;
+
+      var keys;
+      try { keys = JSON.parse(raw); } catch (err) { return; }
+      if (!Array.isArray(keys)) return;
+
+      var index = {};
+      SONGS.forEach(function (s) { index[songKey(s)] = s; });
+
+      keys.forEach(function (k) {
+        var song = index[k];
+        if (song) queue.push({ uid: ++uidSeq, song: song });   // silently drop songs since removed
+      });
+      restored = queue.length > 0;
     }
 
     /* ---------- songbook ---------- */
@@ -239,6 +286,7 @@
       else drawQueue();
     }
 
+    // Every queue mutation ends up here, so this is where the save belongs.
     function drawQueue() {
       var el = $('queue');
       el.innerHTML = '';
@@ -269,6 +317,8 @@
         li.appendChild(pos); li.appendChild(name); li.appendChild(up); li.appendChild(rm);
         el.appendChild(li);
       });
+
+      saveQueue();
     }
 
     function advance() {
@@ -292,6 +342,7 @@
       if (!ready.lyric || !ready.inst) return;
       current = song;
       nudge = 0;
+      restored = false;
       $('idle').hidden = true;
       $('nowTitle').textContent = song.title;
       $('nowArtist').textContent = song.artist || '';
@@ -384,6 +435,7 @@
       $('vol').value = v;
       $('volVal').textContent = v;
       if (ready.inst) inst.setVolume(v);
+      try { localStorage.setItem(VOL_KEY, v); } catch (err) {}
     }
 
     function closeTuner() {
@@ -466,7 +518,13 @@
       }
     });
 
+    /* ---------- startup ---------- */
+    try {
+      var savedVol = localStorage.getItem(VOL_KEY);
+      if (savedVol !== null) $('vol').value = savedVol;
+    } catch (err) {}
     setVolume(+$('vol').value);
+    restoreQueue();
   </script>
 </body>
 </html>
