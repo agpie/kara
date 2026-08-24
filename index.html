@@ -108,41 +108,23 @@
       <h2>Add a song</h2>
 
       <div class="step on" id="stepForm">
-        <p class="hintline">Find a lyric video and an instrumental on YouTube, then paste both links.</p>
+        <p class="hintline">Find a lyric video and an instrumental on YouTube, then paste both links. They'll start playing together straight away.</p>
         <input class="field" id="fTitle" type="text" placeholder="Title" autocomplete="off">
         <input class="field" id="fArtist" type="text" placeholder="Artist" autocomplete="off">
         <input class="field" id="fLyric" type="text" placeholder="Lyric video URL" autocomplete="off">
         <input class="field" id="fInst" type="text" placeholder="Instrumental URL" autocomplete="off">
         <div class="stat" id="fStat"></div>
-        <button class="go" id="beginBtn" disabled>Check the videos</button>
+        <button class="go" id="beginBtn" disabled>Add and play</button>
         <a id="ytLink" href="#" target="_blank" rel="noopener" hidden></a>
       </div>
 
-      <div class="step" id="stepLyric">
-        <p class="hintline">Playing the <b>lyric video</b>. Tap the moment the first sung word lands.</p>
-        <button class="tap" id="tapLyric">Tap on the first word</button>
-        <div class="stat" id="lyricStat"></div>
-        <button id="replayLyric">Restart video</button>
-        <button id="cancelA" class="danger">Cancel</button>
-        <div class="err" id="errLyric"></div>
-      </div>
-
-      <div class="step" id="stepInst">
-        <p class="hintline">Now the <b>instrumental</b>. Tap where that same word would land.</p>
-        <button class="tap" id="tapInst">Tap on the first word</button>
-        <div class="stat" id="instStat"></div>
-        <button id="replayInst">Restart video</button>
-        <button id="backLyric">Redo lyric</button>
-        <button id="cancelB" class="danger">Cancel</button>
-        <div class="err" id="errInst"></div>
-      </div>
-
       <div class="step" id="stepReview">
-        <p class="hintline">Both playing together. Fine-tune with Tune if needed, then approve.</p>
+        <p class="hintline">Playing both, starting at an offset of 0. Nudge until the words line up, then save.</p>
         <div class="stat" id="reviewStat"></div>
         <button class="go" id="approveBtn">Sounds right — save it</button>
-        <button id="redoBtn">Redo timings</button>
+        <button id="restartBtn">Restart</button>
         <button id="cancelC" class="danger">Discard</button>
+        <div class="err" id="errAdd"></div>
       </div>
     </div>
   </aside>
@@ -158,14 +140,15 @@
   var VOL_KEY   = 'karaoke.volume';
   var GAP_KEY   = 'karaoke.gap';
   var MINE_KEY  = 'karaoke.mysongs';
-  var OVR_KEY   = 'karaoke.tweaks';   // now holds {offset, lyricId, instId} per song
+  var OVR_KEY   = 'karaoke.tweaks';   // holds {offset, lyricId, instId} per song
 
   var HEADER =
     '/* Songbook.\n' +
     '   offset = how much later the first sung word lands in the instrumental\n' +
-    '   than in the lyric video, in seconds. Positive: the instrumental has the\n' +
-    '   longer intro and starts first. Negative: the lyric video starts first.\n' +
-    '   Both videos always play from their own beginning; nothing is trimmed.\n' +
+    '   than in the lyric video, in tenths of a second. Positive: the\n' +
+    '   instrumental has the longer intro and starts first. Negative: the\n' +
+    '   lyric video starts first. Both videos always play from their own\n' +
+    '   beginning; nothing is trimmed.\n' +
     '   end (optional): seconds into the instrumental to stop at. */\n\n';
 
   var lyric = null, inst = null;
@@ -179,9 +162,12 @@
 
   var mine = [], BOOK = [], mineKeys = {};
   var overrides = {}, ORIGINAL = {};
-  var addState = null, draft = null, tapL = 0, tapI = 0;
+  var addState = null, draft = null;
 
   var $ = function (id) { return document.getElementById(id); };
+
+  // Offsets live at one decimal place, matching the nudge step.
+  function round1(n) { return Math.round((+n || 0) * 10) / 10; }
 
   // A song's identity is fixed the first time we see it, so swapping a video
   // ID later doesn't orphan its overrides or its place in a saved queue.
@@ -252,8 +238,8 @@
       (code === 101 || code === 150 ? ' — embedding is disabled on it, pick another upload.' : '');
   }
   function fail(w, code) {
-    if (addState === 'lyric') { $('errLyric').textContent = errText(w, code); return; }
-    if (addState === 'inst')  { $('errInst').textContent  = errText(w, code); return; }
+    // While adding, this is the embeddability check - surface it in the panel.
+    if (addState === 'review') { $('errAdd').textContent = errText(w, code); return; }
     // An outro that won't load just leaves the card on black. Not worth a warning.
     if (ilSong && w === 'lyric') { clearInterval(ilSeekWait); ilSeekWait = null; return; }
     $('readout').textContent = errText(w, code);
@@ -267,6 +253,7 @@
 
     // Snapshot songs.js before anything mutates it - this is what Reset returns to.
     SONGS.forEach(function (s) {
+      s.offset = round1(s.offset);
       ORIGINAL[songKey(s)] = { offset: s.offset, lyricId: s.lyricId, instId: s.instId };
     });
 
@@ -277,7 +264,7 @@
       if (typeof v === 'number') v = { offset: v };   // migrate the old offset-only format
       if (!v || typeof v !== 'object') return;
       var o = ORIGINAL[k], keep = {};
-      if (typeof v.offset === 'number' && v.offset !== o.offset) keep.offset = v.offset;
+      if (typeof v.offset === 'number' && round1(v.offset) !== o.offset) keep.offset = round1(v.offset);
       if (v.lyricId && v.lyricId !== o.lyricId) keep.lyricId = v.lyricId;
       if (v.instId && v.instId !== o.instId) keep.instId = v.instId;
       if (Object.keys(keep).length) overrides[k] = keep;
@@ -306,13 +293,14 @@
     var global = {};
     SONGS.forEach(function (s) { global[songKey(s)] = true; });
     mine = mine.filter(function (s) { return !global[songKey(s)]; });
+    mine.forEach(function (s) { s.offset = round1(s.offset); });
     saveMine();
   }
   function saveMine() {
     try {
       localStorage.setItem(MINE_KEY, JSON.stringify(mine.map(function (s) {
         var o = { title: s.title, artist: s.artist || '',
-                  lyricId: s.lyricId, instId: s.instId, offset: s.offset };
+                  lyricId: s.lyricId, instId: s.instId, offset: round1(s.offset) };
         if (s.end) o.end = s.end;
         if (s.note) o.note = s.note;
         return o;                       // _key is derived, never stored
@@ -360,7 +348,7 @@
     var out = BOOK.map(function (s) {
       var o = { title: s.title, artist: s.artist || '',
                 lyricId: s.lyricId, instId: s.instId,
-                offset: +(+s.offset).toFixed(2) };
+                offset: round1(s.offset) };
       if (s.end) o.end = s.end;
       if (s.note) o.note = s.note;
       return o;
@@ -705,11 +693,12 @@
         lyric.seekTo(target, true);
       }
       $('readout').textContent =
-        'inst ' + it.toFixed(2) + 's   offset ' + off.toFixed(2) +
+        'inst ' + it.toFixed(1) + 's   offset ' + off.toFixed(1) +
         's   drift ' + (drift >= 0 ? '+' : '') + drift.toFixed(2) + 's';
       if (addState === 'review') {
-        $('reviewStat').innerHTML = 'offset <b>' + off.toFixed(2) + 's</b> — ' +
-          (off >= 0 ? 'instrumental starts first' : 'lyric video starts first');
+        $('reviewStat').innerHTML = 'offset <b>' + off.toFixed(1) + 's</b> — ' +
+          (off > 0 ? 'instrumental starts first'
+           : off < 0 ? 'lyric video starts first' : 'both start together');
       }
     }
     paintProgress(it);
@@ -748,7 +737,7 @@
 
   function applyNudge(d) {
     if (!current) return;
-    current.offset = +(current.offset - d).toFixed(2);
+    current.offset = round1(current.offset - d);
     persistCurrent();
     if (!instStarted || !lyricStarted) return;
     try { lyric.seekTo(inst.getCurrentTime() - current.offset, true); } catch (err) {}
@@ -835,7 +824,7 @@
     return m ? m[1] : null;
   }
   function showStep(name) {
-    ['stepForm','stepLyric','stepInst','stepReview'].forEach(function (id) {
+    ['stepForm','stepReview'].forEach(function (id) {
       $(id).classList.toggle('on', id === name);
     });
   }
@@ -856,6 +845,8 @@
       $('ytLink').textContent = 'Search YouTube for "' + q + '"';
     }
   }
+
+  // Straight to both videos playing at offset 0 - tune by ear from there.
   function beginAdd() {
     if (!ready.lyric || !ready.inst) return;
     stop();
@@ -864,38 +855,16 @@
       lyricId: parseId($('fLyric').value), instId: parseId($('fInst').value),
       offset: 0
     };
-    tapL = tapI = 0;
-    captureLyric();
-  }
-  function captureLyric() {
-    addState = 'lyric';
-    $('errLyric').textContent = ''; $('lyricStat').textContent = '';
-    showStep('stepLyric');
-    $('idle').hidden = true;
-    $('instHost').classList.remove('is-capturing');
-    inst.stopVideo();
-    lyric.unMute(); lyric.setVolume(+$('vol').value);
-    lyric.loadVideoById({ videoId: draft.lyricId, startSeconds: 0 });
-  }
-  function captureInst() {
-    addState = 'inst';
-    $('errInst').textContent = ''; $('instStat').textContent = '';
-    showStep('stepInst');
-    lyric.stopVideo(); lyric.mute();
-    $('instHost').classList.add('is-capturing');
-    inst.loadVideoById({ videoId: draft.instId, startSeconds: 0 });
-  }
-  function reviewDraft() {
-    draft.offset = +(tapI - tapL).toFixed(2);
     addState = 'review';
-    $('instHost').classList.remove('is-capturing');
+    $('errAdd').textContent = '';
+    $('reviewStat').innerHTML = 'offset <b>0.0s</b> — both start together';
     showStep('stepReview');
-    openTuner();
     play(draft);
+    openTuner();
   }
+
   function endAdd(clearFields) {
     addState = null; draft = null;
-    $('instHost').classList.remove('is-capturing');
     lyric.mute();
     showStep('stepForm');
     closeTuner();
@@ -908,26 +877,13 @@
 
   $('fTitle').oninput = $('fArtist').oninput = $('fLyric').oninput = $('fInst').oninput = checkForm;
   $('beginBtn').onclick = beginAdd;
-  $('tapLyric').onclick = function () {
-    try { tapL = Math.max(0, +lyric.getCurrentTime().toFixed(2)); } catch (err) { return; }
-    $('lyricStat').innerHTML = 'first word at <b>' + tapL.toFixed(2) + 's</b>';
-    setTimeout(captureInst, 400);
-  };
-  $('replayLyric').onclick = function () { lyric.seekTo(0, true); lyric.playVideo(); };
-  $('tapInst').onclick = function () {
-    try { tapI = Math.max(0, +inst.getCurrentTime().toFixed(2)); } catch (err) { return; }
-    $('instStat').innerHTML = 'first word at <b>' + tapI.toFixed(2) + 's</b>';
-    setTimeout(reviewDraft, 400);
-  };
-  $('replayInst').onclick = function () { inst.seekTo(0, true); inst.playVideo(); };
-  $('backLyric').onclick = captureLyric;
-  $('cancelA').onclick = $('cancelB').onclick = $('cancelC').onclick = function () { endAdd(false); };
-  $('redoBtn').onclick = function () { closeTuner(); captureLyric(); };
+  $('restartBtn').onclick = function () { if (draft) play(draft); };
+  $('cancelC').onclick = function () { endAdd(false); };
   $('approveBtn').onclick = function () {
     var saved = {
       title: draft.title, artist: draft.artist,
       lyricId: draft.lyricId, instId: draft.instId,
-      offset: +draft.offset.toFixed(2)
+      offset: round1(draft.offset)
     };
     mine.push(saved); saveMine(); endAdd(true); drawList();
     showOsd('Saved: ' + saved.title, 'Not yet in songs.js');
