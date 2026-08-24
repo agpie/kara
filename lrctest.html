@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LRCLIB probe</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 24px;
+         background: #14142c; color: #eceafa; line-height: 1.5; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #9a97c4; font-size: 13px; margin: 0 0 24px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
+       color: #9a97c4; margin: 28px 0 10px; }
+  .wrap { max-width: 820px; }
+  textarea, input { width: 100%; padding: 10px 12px; font: inherit;
+    background: #0b0b1c; color: #eceafa; border: 1px solid #3a3770;
+    border-radius: 3px; margin-bottom: 8px; }
+  textarea { min-height: 92px; font-family: ui-monospace, monospace; font-size: 13px; }
+  .row { display: flex; gap: 8px; }
+  .row input { margin-bottom: 8px; }
+  button { font: inherit; padding: 9px 16px; cursor: pointer;
+    background: #34317a; color: #eceafa; border: 1px solid #7b78d0; border-radius: 3px; }
+  button:hover { border-color: #b9b6f0; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  .card { background: #0b0b1c; border: 1px solid #2a2850; border-radius: 4px;
+          padding: 14px 16px; margin-bottom: 10px; }
+  .card h3 { margin: 0 0 2px; font-size: 16px; }
+  .meta { color: #9a97c4; font-size: 13px; }
+  .verdict { font-weight: 600; margin: 10px 0 0; }
+  .ok { color: #7bd0c4; }
+  .warn { color: #f0b429; }
+  .bad { color: #ff9a9a; }
+  .lines { font-family: ui-monospace, monospace; font-size: 12.5px;
+           margin: 10px 0 0; color: #cfcdf5; }
+  .lines div { display: flex; gap: 12px; padding: 1px 0; }
+  .lines .t { color: #f0b429; width: 5.5em; flex: none; }
+  .lines .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note { color: #6f6c9c; font-size: 12px; margin-top: 8px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: #9a97c4; font-size: 13px; }
+  pre { font-family: ui-monospace, monospace; font-size: 11.5px; color: #9a97c4;
+        overflow-x: auto; background: #14142c; padding: 10px; border-radius: 3px; }
+  #summary { padding: 12px 16px; border: 1px solid #3a3770; border-radius: 4px;
+             margin-bottom: 14px; }
+  #summary b { color: #f0b429; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>LRCLIB probe</h1>
+<p class="sub">Checks that fetch-by-id works from a browser and that the timestamps parse.
+Serve this over http — opening it as a <code>file://</code> may be rejected by CORS.</p>
+
+<h2>Fetch by ID</h2>
+<textarea id="ids" placeholder="Paste lrclib.net links or bare IDs, one per line"></textarea>
+<button id="goIds">Fetch</button>
+
+<h2>Or search by name</h2>
+<div class="row">
+  <input id="qArtist" type="text" placeholder="Artist">
+  <input id="qTitle" type="text" placeholder="Title">
+</div>
+<button id="goSearch">Search</button>
+
+<h2>Results</h2>
+<div id="summary" hidden></div>
+<div id="out"></div>
+
+</div>
+
+<script>
+  var API = 'https://lrclib.net/api';
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[<>&]/g, function (c) {
+      return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c];
+    });
+  }
+  function fmt(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    var m = Math.floor(sec / 60), s = (sec % 60).toFixed(1);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  // Accepts a full lrclib.net URL or a bare number - we only want the digits.
+  function parseId(s) {
+    var m = String(s || '').match(/(\d{2,})/);
+    return m ? m[1] : null;
+  }
+
+  // [mm:ss.xx] or [mm:ss], possibly several on one line. Metadata tags
+  // like [ar: ...] have no digits in that shape and fall through.
+  function parseLrc(text) {
+    var out = [], lines = String(text || '').split(/\r?\n/);
+    var re = /\[(\d{1,3}):(\d{2}(?:[.:]\d{1,3})?)\]/g;
+    lines.forEach(function (line) {
+      var stamps = [], m;
+      re.lastIndex = 0;
+      while ((m = re.exec(line)) !== null) {
+        stamps.push(parseInt(m[1], 10) * 60 + parseFloat(m[2].replace(':', '.')));
+      }
+      if (!stamps.length) return;
+      var body = line.replace(re, '').trim();
+      stamps.forEach(function (t) { out.push({ t: t, text: body }); });
+    });
+    out.sort(function (a, b) { return a.t - b.t; });
+    return out;
+  }
+
+  function report(rec, label) {
+    var card = document.createElement('div');
+    card.className = 'card';
+
+    if (rec.error) {
+      card.innerHTML = '<h3>' + esc(label) + '</h3>' +
+        '<p class="verdict bad">' + esc(rec.error) + '</p>';
+      $('out').appendChild(card);
+      return { ok: false, synced: false };
+    }
+
+    var lines = parseLrc(rec.syncedLyrics);
+    var hasSynced = !!(rec.syncedLyrics && lines.length);
+    var hasPlain = !!rec.plainLyrics;
+
+    var verdict, cls;
+    if (rec.instrumental) { verdict = 'Marked instrumental - no lyrics.'; cls = 'bad'; }
+    else if (hasSynced) { verdict = 'Synced lyrics: ' + lines.length + ' lines.'; cls = 'ok'; }
+    else if (hasPlain) { verdict = 'Plain lyrics only - no timings.'; cls = 'warn'; }
+    else { verdict = 'No lyrics on this record.'; cls = 'bad'; }
+
+    var html =
+      '<h3>' + esc(rec.trackName || label) + '</h3>' +
+      '<div class="meta">' + esc(rec.artistName || '') +
+      (rec.albumName ? ' &middot; ' + esc(rec.albumName) : '') +
+      (rec.duration ? ' &middot; ' + fmt(rec.duration) : '') +
+      ' &middot; id ' + esc(rec.id) + '</div>' +
+      '<p class="verdict ' + cls + '">' + verdict + '</p>';
+
+    if (hasSynced) {
+      var first = lines[0], last = lines[lines.length - 1];
+      html += '<div class="lines">';
+      lines.slice(0, 12).forEach(function (l) {
+        html += '<div><span class="t">' + fmt(l.t) + '</span>' +
+                '<span class="txt">' + esc(l.text || '\u2014') + '</span></div>';
+      });
+      html += '</div>';
+      if (lines.length > 12) {
+        html += '<p class="note">' + (lines.length - 12) + ' more lines. ' +
+          'First timestamp ' + fmt(first.t) + ', last ' + fmt(last.t) + '.</p>';
+      }
+      // The sanity check that matters: do the timings span the whole track?
+      if (rec.duration && last.t > rec.duration + 5) {
+        html += '<p class="verdict warn">Last line falls after the track ends - ' +
+                'suspect timings.</p>';
+      }
+      if (first.t > 60) {
+        html += '<p class="note">First line is over a minute in - long intro, or a mismatch.</p>';
+      }
+    }
+
+    html += '<details><summary>Raw fields</summary><pre>' +
+      esc(JSON.stringify(Object.keys(rec).reduce(function (o, k) {
+        o[k] = (typeof rec[k] === 'string' && rec[k].length > 60)
+          ? rec[k].slice(0, 60) + '\u2026 (' + rec[k].length + ' chars)'
+          : rec[k];
+        return o;
+      }, {}), null, 2)) + '</pre></details>';
+
+    card.innerHTML = html;
+    $('out').appendChild(card);
+    return { ok: true, synced: hasSynced };
+  }
+
+  function setSummary(text) {
+    $('summary').hidden = false;
+    $('summary').innerHTML = text;
+  }
+
+  $('goIds').onclick = function () {
+    var raw = $('ids').value.split(/\r?\n/).map(function (s) { return s.trim(); })
+                .filter(Boolean);
+    if (!raw.length) return;
+    $('out').innerHTML = '';
+    $('summary').hidden = true;
+    this.disabled = true;
+
+    var done = 0, synced = 0, found = 0;
+    var self = this;
+
+    raw.forEach(function (entry) {
+      var id = parseId(entry);
+      if (!id) {
+        report({ error: 'No numeric ID found in this line.' }, entry);
+        if (++done === raw.length) finish();
+        return;
+      }
+      fetch(API + '/get/' + id)
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status +
+            (r.status === 404 ? ' - no record with that ID' : ''));
+          return r.json();
+        })
+        .then(function (rec) {
+          var res = report(rec, id);
+          if (res.ok) found++;
+          if (res.synced) synced++;
+        })
+        .catch(function (err) {
+          report({ error: String(err.message || err) }, id);
+        })
+        .then(function () { if (++done === raw.length) finish(); });
+    });
+
+    function finish() {
+      self.disabled = false;
+      setSummary('<b>' + found + '/' + raw.length + '</b> records fetched, ' +
+                 '<b>' + synced + '</b> with synced lyrics.');
+    }
+  };
+
+  $('goSearch').onclick = function () {
+    var a = $('qArtist').value.trim(), t = $('qTitle').value.trim();
+    if (!a && !t) return;
+    $('out').innerHTML = '';
+    $('summary').hidden = true;
+    this.disabled = true;
+    var self = this;
+
+    var url = API + '/search?' +
+      (t ? 'track_name=' + encodeURIComponent(t) : '') +
+      (a ? (t ? '&' : '') + 'artist_name=' + encodeURIComponent(a) : '');
+
+    fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (list) {
+        if (!Array.isArray(list) || !list.length) {
+          setSummary('No results.');
+          return;
+        }
+        setSummary('<b>' + list.length + '</b> results. ' +
+                   'Note the id of whichever version matches your instrumental.');
+        list.slice(0, 8).forEach(function (rec) { report(rec, String(rec.id)); });
+      })
+      .catch(function (err) {
+        setSummary('<span class="bad">Search failed: ' + esc(err.message || err) + '</span>');
+      })
+      .then(function () { self.disabled = false; });
+  };
+</script>
+</body>
+</html>
