@@ -6,38 +6,31 @@
 
 var SONGS = [
   {
-    "title": "Polaroid Love",
-    "artist": "ENHYPEN",
-    "videoId": "7PvV7EgO__0",
-    "lrcId": "35430217",
-    "offset": 0
-  },
-  {
     "title": "7 Rings",
     "artist": "Ariana Grande",
     "videoId": "QYh6mYIJG2Y",
     "lrcId": "36854307",
-    "offset": 0
+    "offset": 0.2
   },
   {
     "title": "Lush Life",
     "artist": "Zara Larsson",
     "videoId": "tD4HCZe-tew",
     "lrcId": "35045222",
-    "offset": 0
+    "offset": 1.5
   },
   {
     "title": "2002",
     "artist": "Anne-Marie",
     "videoId": "Il-an3K9pjg",
     "lrcId": "29253958",
-    "offset": 0
+    "offset": -0.3
   },
   {
     "title": "24K Magic",
     "artist": "Bruno Mars",
     "videoId": "UqyT8IEBkvY",
     "lrcId": "36891458",
-    "offset": 0
+    "offset": -0.7
   }
 ];
