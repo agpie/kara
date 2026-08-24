@@ -421,6 +421,7 @@
 
     $('idle').hidden = true;
     $('interlude').classList.add('on');
+    $('ilKicker').textContent = 'Up next';
     $('ilTitle').textContent = song.title;
     $('ilArtist').textContent = song.artist || '';
     $('ilThen').textContent = queue.length ? 'then ' + queue[0].song.title : '';
@@ -464,6 +465,7 @@
         clearInterval(ilSeekWait); ilSeekWait = null;
         try { lyric.seekTo(d * OUTRO_AT, true); lyric.playVideo(); } catch (err) {}
         ilPlaying = true;
+        $('ilKicker').textContent = 'Just played · ' + prev.title;
         if (!ilFadingOut) fadeLyric(outroVolume(), FADE_IN_MS);
       } else if (++tries > 50) { clearInterval(ilSeekWait); ilSeekWait = null; }
     }, 100);
