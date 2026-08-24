@@ -141,6 +141,9 @@
 <script src="songs.js"></script>
 <script>
   var LOCK_TOL = 0.10, RUN_TOL = 0.28, LOCK_MS = 5000;
+  var OUTRO_AT = 0.25;      // fraction into the instrumental - roughly a chorus
+  var FADE_IN_MS = 900, FADE_OUT_MS = 1400;
+
   var QUEUE_KEY = 'karaoke.queue';
   var VOL_KEY   = 'karaoke.volume';
   var GAP_KEY   = 'karaoke.gap';
@@ -162,6 +165,7 @@
   var queue = [], uidSeq = 0, restored = false;
 
   var ilTimer = null, ilEndsAt = 0, ilSong = null, ilTotal = 0;
+  var ilFade = null, ilSeekWait = null, ilFadingOut = false, ilPlaying = false;
 
   var mine = [], BOOK = [], mineKeys = {};
   var tweaks = {}, ORIGINAL = {};
@@ -234,6 +238,8 @@
   function fail(w, code) {
     if (addState === 'lyric') { $('errLyric').textContent = errText(w, code); return; }
     if (addState === 'inst')  { $('errInst').textContent  = errText(w, code); return; }
+    // An outro that won't load just leaves the card on black. Not worth a warning.
+    if (ilSong && w === 'lyric') { clearInterval(ilSeekWait); ilSeekWait = null; return; }
     $('readout').textContent = errText(w, code);
     openTuner();
   }
@@ -314,7 +320,6 @@
   /* ---------- persistence ---------- */
   function saveQueue() {
     try {
-      // A song waiting out the interlude still counts as pending.
       var head = ilSong ? [ilSong]
                : (current && addState !== 'review' ? [current] : []);
       var pending = head.concat(queue.map(function (i) { return i.song; }));
@@ -358,7 +363,6 @@
   function enqueue(song) {
     if (addState) return;
     queue.push({ uid: ++uidSeq, song: song });
-    // Nothing playing and no countdown running: start it immediately.
     // The first pick shouldn't sit through a gap.
     if (!current && !ilSong) advance(true); else drawQueue();
   }
@@ -396,14 +400,15 @@
 
   // immediate=true skips the changeover gap.
   function advance(immediate) {
+    var prev = current;                 // captured before stopPlayers() clears it
     var item = queue.shift();
     if (!item) { stop(); return; }
     drawQueue();
-    if (immediate) play(item.song); else beginInterlude(item.song);
+    if (immediate) play(item.song); else beginInterlude(item.song, prev);
   }
 
   /* ---------- the changeover gap ---------- */
-  function beginInterlude(song) {
+  function beginInterlude(song, prev) {
     var secs = +$('gap').value;
     if (!secs) { play(song); return; }
 
@@ -411,6 +416,8 @@
     ilSong = song;
     ilTotal = secs * 1000;
     ilEndsAt = performance.now() + ilTotal;
+    ilFadingOut = false;
+    ilPlaying = false;
 
     $('idle').hidden = true;
     $('interlude').classList.add('on');
@@ -425,16 +432,54 @@
     $('resume').hidden = true;
     closeTuner();
 
-    // Buffer both videos during the break so the start is crisp.
-    try {
-      lyric.cueVideoById({ videoId: song.lyricId, startSeconds: 0 });
-      inst.cueVideoById({ videoId: song.instId, startSeconds: 0 });
-    } catch (err) {}
+    // Hidden player buffers the song that's coming; visible one plays the outgoing backing track.
+    try { inst.cueVideoById({ videoId: song.instId, startSeconds: 0 }); } catch (err) {}
+    startOutro(prev);
 
     paintInterlude();
     clearInterval(ilTimer);
     ilTimer = setInterval(paintInterlude, 100);
     saveQueue();
+  }
+
+  function outroVolume() { return Math.round(+$('vol').value / 2); }
+
+  // The instrumental of the song that just finished, on the main screen, quietly.
+  function startOutro(prev) {
+    if (!prev || !prev.instId) return;
+    clearInterval(ilSeekWait); ilSeekWait = null;
+    try {
+      lyric.unMute();
+      lyric.setVolume(0);          // silent until the seek lands and the fade lifts it
+      lyric.loadVideoById({ videoId: prev.instId, startSeconds: 0 });
+    } catch (err) { return; }
+
+    // getDuration() is 0 until metadata arrives, so wait before jumping.
+    var tries = 0;
+    ilSeekWait = setInterval(function () {
+      if (!ilSong) { clearInterval(ilSeekWait); ilSeekWait = null; return; }
+      var d = 0;
+      try { d = lyric.getDuration() || 0; } catch (err) {}
+      if (d > 0) {
+        clearInterval(ilSeekWait); ilSeekWait = null;
+        try { lyric.seekTo(d * OUTRO_AT, true); lyric.playVideo(); } catch (err) {}
+        ilPlaying = true;
+        if (!ilFadingOut) fadeLyric(outroVolume(), FADE_IN_MS);
+      } else if (++tries > 50) { clearInterval(ilSeekWait); ilSeekWait = null; }
+    }, 100);
+  }
+
+  function fadeLyric(target, ms) {
+    clearInterval(ilFade);
+    var from = 0;
+    try { from = lyric.getVolume(); } catch (err) {}
+    var steps = Math.max(1, Math.round(ms / 40)), i = 0;
+    ilFade = setInterval(function () {
+      i++;
+      var v = Math.round(from + (target - from) * (i / steps));
+      try { lyric.setVolume(Math.max(0, Math.min(100, v))); } catch (err) {}
+      if (i >= steps) { clearInterval(ilFade); ilFade = null; }
+    }, 40);
   }
 
   function paintInterlude() {
@@ -443,13 +488,25 @@
     $('ilCount').textContent = secs;
     $('progTime').textContent = 'Starting in ' + secs + 's';
     $('progFill').style.width = (100 - (left / ilTotal) * 100).toFixed(1) + '%';
+    if (!ilFadingOut && left <= FADE_OUT_MS) {
+      ilFadingOut = true;
+      if (ilPlaying) fadeLyric(0, Math.min(FADE_OUT_MS, left));
+    }
     if (left <= 0) endInterlude(true);
+  }
+
+  function stopOutro() {
+    clearInterval(ilFade); ilFade = null;
+    clearInterval(ilSeekWait); ilSeekWait = null;
+    ilPlaying = false;
+    try { lyric.stopVideo(); lyric.mute(); lyric.setVolume(+$('vol').value); } catch (err) {}
   }
 
   function endInterlude(start) {
     clearInterval(ilTimer); ilTimer = null;
+    stopOutro();
     $('interlude').classList.remove('on');
-    var s = ilSong; ilSong = null;
+    var s = ilSong; ilSong = null; ilFadingOut = false;
     if (start && s) play(s);
   }
 
@@ -495,7 +552,8 @@
     $('progTime').textContent = '0:00';
     refreshResetBtn();
 
-    lyric.mute();
+    lyric.mute();                       // the outro left it unmuted
+    lyric.setVolume(+$('vol').value);
     inst.setVolume(+$('vol').value);
     if (addState !== 'review') closeTuner();
     showOsd(song.title, song.artist || '');
@@ -545,9 +603,10 @@
     // Cancelling a countdown puts its song back at the front of the queue.
     if (ilSong) {
       clearInterval(ilTimer); ilTimer = null;
+      stopOutro();
       $('interlude').classList.remove('on');
       queue.unshift({ uid: ++uidSeq, song: ilSong });
-      ilSong = null;
+      ilSong = null; ilFadingOut = false;
     }
     stopPlayers();
     $('idle').hidden = false;
@@ -612,8 +671,8 @@
 
   /* ---------- shared actions ---------- */
   function skip() {
-    if (ilSong) { endInterlude(true); return; }   // countdown running: go now
-    advance(!current);                             // mid-song gets a gap; from stopped, straight in
+    if (ilSong) { endInterlude(true); return; }
+    advance(!current);
   }
 
   function togglePause() {
@@ -624,13 +683,12 @@
     else p.playVideo();
   }
 
-  // A nudge edits the song itself and is remembered.
   function applyNudge(d) {
     if (!current) return;
     current.offset = +(current.offset - d).toFixed(2);
     if (addState !== 'review') {
-      if (mineKeys[songKey(current)]) saveMine();   // local songs store their own offset
-      else noteTweak(current);                      // committed songs get an override
+      if (mineKeys[songKey(current)]) saveMine();
+      else noteTweak(current);
       refreshResetBtn();
       drawList();
     }
@@ -646,6 +704,10 @@
     v = Math.max(0, Math.min(100, Math.round(v)));
     $('vol').value = v; $('volVal').textContent = v;
     if (ready.inst) inst.setVolume(v);
+    // Track the slider live during the break, but never fight a fade.
+    if (ilPlaying && !ilFade && !ilFadingOut) {
+      try { lyric.setVolume(outroVolume()); } catch (err) {}
+    }
     try { localStorage.setItem(VOL_KEY, v); } catch (err) {}
   }
   function closeTuner() { $('tuner').hidden = true; $('tuneBtn').classList.remove('is-open'); }
