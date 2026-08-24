@@ -17,6 +17,14 @@
       <div id="shield"></div>
       <div id="idle">Pick a song from the list to start</div>
       <div id="osd"></div>
+      <div id="interlude">
+        <div id="ilKicker">Up next</div>
+        <div id="ilTitle"></div>
+        <div id="ilArtist"></div>
+        <div id="ilCount">10</div>
+        <button id="ilStart" class="go">Start now</button>
+        <div id="ilThen"></div>
+      </div>
     </div>
     <div id="progress">
       <div id="progFill"></div>
@@ -34,6 +42,16 @@
         <label for="vol">Backing</label>
         <input id="vol" type="range" min="0" max="100" value="80">
         <span class="val" id="volVal">80</span>
+      </span>
+      <span class="vol">
+        <label for="gap">Gap</label>
+        <select id="gap">
+          <option value="0">Off</option>
+          <option value="5">5s</option>
+          <option value="10" selected>10s</option>
+          <option value="20">20s</option>
+          <option value="30">30s</option>
+        </select>
       </span>
       <button id="tuneBtn">Tune</button>
       <button id="fsBtn">Fullscreen</button>
@@ -125,6 +143,7 @@
   var LOCK_TOL = 0.10, RUN_TOL = 0.28, LOCK_MS = 5000;
   var QUEUE_KEY = 'karaoke.queue';
   var VOL_KEY   = 'karaoke.volume';
+  var GAP_KEY   = 'karaoke.gap';
   var MINE_KEY  = 'karaoke.mysongs';
   var TWEAK_KEY = 'karaoke.tweaks';
 
@@ -141,6 +160,8 @@
   var current = null, startedAt = 0, timer = null, watchdog = null;
   var pre = null, instStarted = false, lyricStarted = false;
   var queue = [], uidSeq = 0, restored = false;
+
+  var ilTimer = null, ilEndsAt = 0, ilSong = null, ilTotal = 0;
 
   var mine = [], BOOK = [], mineKeys = {};
   var tweaks = {}, ORIGINAL = {};
@@ -222,7 +243,6 @@
     try { tweaks = JSON.parse(localStorage.getItem(TWEAK_KEY) || '{}') || {}; }
     catch (err) { tweaks = {}; }
     SONGS.forEach(function (s) { ORIGINAL[songKey(s)] = s.offset; });
-    // Once songs.js catches up with a tweak, the tweak is redundant.
     Object.keys(tweaks).forEach(function (k) {
       if (ORIGINAL[k] === tweaks[k]) delete tweaks[k];
     });
@@ -294,8 +314,10 @@
   /* ---------- persistence ---------- */
   function saveQueue() {
     try {
-      var pending = (current && addState !== 'review' ? [current] : [])
-        .concat(queue.map(function (i) { return i.song; }));
+      // A song waiting out the interlude still counts as pending.
+      var head = ilSong ? [ilSong]
+               : (current && addState !== 'review' ? [current] : []);
+      var pending = head.concat(queue.map(function (i) { return i.song; }));
       sessionStorage.setItem(QUEUE_KEY, JSON.stringify(pending.map(songKey)));
     } catch (err) {}
   }
@@ -336,7 +358,9 @@
   function enqueue(song) {
     if (addState) return;
     queue.push({ uid: ++uidSeq, song: song });
-    if (!current) advance(); else drawQueue();
+    // Nothing playing and no countdown running: start it immediately.
+    // The first pick shouldn't sit through a gap.
+    if (!current && !ilSong) advance(true); else drawQueue();
   }
   function drawQueue() {
     var el = $('queue');
@@ -367,13 +391,66 @@
     if (addState === 'review') { $('progNext').textContent = 'Preview'; return; }
     $('progNext').textContent = queue.length
       ? 'Next: ' + queue[0].song.title + (queue.length > 1 ? ' (+' + (queue.length - 1) + ')' : '')
-      : (current ? 'Last song' : '');
+      : (current || ilSong ? 'Last song' : '');
   }
-  function advance() {
+
+  // immediate=true skips the changeover gap.
+  function advance(immediate) {
     var item = queue.shift();
     if (!item) { stop(); return; }
-    play(item.song);
     drawQueue();
+    if (immediate) play(item.song); else beginInterlude(item.song);
+  }
+
+  /* ---------- the changeover gap ---------- */
+  function beginInterlude(song) {
+    var secs = +$('gap').value;
+    if (!secs) { play(song); return; }
+
+    stopPlayers();
+    ilSong = song;
+    ilTotal = secs * 1000;
+    ilEndsAt = performance.now() + ilTotal;
+
+    $('idle').hidden = true;
+    $('interlude').classList.add('on');
+    $('ilTitle').textContent = song.title;
+    $('ilArtist').textContent = song.artist || '';
+    $('ilThen').textContent = queue.length ? 'then ' + queue[0].song.title : '';
+    $('nowTitle').textContent = song.title;
+    $('nowArtist').textContent = song.artist || '';
+    $('pauseBtn').disabled = true;
+    $('skipBtn').disabled = false;
+    $('stopBtn').disabled = false;
+    $('resume').hidden = true;
+    closeTuner();
+
+    // Buffer both videos during the break so the start is crisp.
+    try {
+      lyric.cueVideoById({ videoId: song.lyricId, startSeconds: 0 });
+      inst.cueVideoById({ videoId: song.instId, startSeconds: 0 });
+    } catch (err) {}
+
+    paintInterlude();
+    clearInterval(ilTimer);
+    ilTimer = setInterval(paintInterlude, 100);
+    saveQueue();
+  }
+
+  function paintInterlude() {
+    var left = Math.max(0, ilEndsAt - performance.now());
+    var secs = Math.ceil(left / 1000);
+    $('ilCount').textContent = secs;
+    $('progTime').textContent = 'Starting in ' + secs + 's';
+    $('progFill').style.width = (100 - (left / ilTotal) * 100).toFixed(1) + '%';
+    if (left <= 0) endInterlude(true);
+  }
+
+  function endInterlude(start) {
+    clearInterval(ilTimer); ilTimer = null;
+    $('interlude').classList.remove('on');
+    var s = ilSong; ilSong = null;
+    if (start && s) play(s);
   }
 
   /* ---------- playback ---------- */
@@ -407,6 +484,7 @@
     instStarted = false; lyricStarted = false;
 
     $('idle').hidden = true;
+    $('interlude').classList.remove('on');
     $('nowTitle').textContent = song.title;
     $('nowArtist').textContent = song.artist || '';
     $('pauseBtn').disabled = false;
@@ -439,6 +517,7 @@
     startedAt = performance.now();
     clearInterval(timer);
     timer = setInterval(tick, 350);
+    saveQueue();
   }
 
   function preRoll() {
@@ -453,12 +532,24 @@
     }
   }
 
-  function stop() {
+  // Silences everything without touching the UI.
+  function stopPlayers() {
     clearInterval(timer); timer = null;
     clearInterval(pre); pre = null;
     clearTimeout(watchdog);
     current = null; instStarted = false; lyricStarted = false;
     try { inst.stopVideo(); lyric.stopVideo(); } catch (err) {}
+  }
+
+  function stop() {
+    // Cancelling a countdown puts its song back at the front of the queue.
+    if (ilSong) {
+      clearInterval(ilTimer); ilTimer = null;
+      $('interlude').classList.remove('on');
+      queue.unshift({ uid: ++uidSeq, song: ilSong });
+      ilSong = null;
+    }
+    stopPlayers();
     $('idle').hidden = false;
     $('idle').textContent = queue.length ? 'Stopped. Press Skip to play the next song.'
                                          : 'Pick a song from the list to start';
@@ -520,14 +611,20 @@
   }
 
   /* ---------- shared actions ---------- */
+  function skip() {
+    if (ilSong) { endInterlude(true); return; }   // countdown running: go now
+    advance(!current);                             // mid-song gets a gap; from stopped, straight in
+  }
+
   function togglePause() {
+    if (ilSong) { endInterlude(true); return; }
     if (!current) return;
     var p = instStarted ? inst : lyric;
     if (p.getPlayerState() === YT.PlayerState.PLAYING) p.pauseVideo();
     else p.playVideo();
   }
 
-  // A nudge now edits the song itself and is remembered.
+  // A nudge edits the song itself and is remembered.
   function applyNudge(d) {
     if (!current) return;
     current.offset = +(current.offset - d).toFixed(2);
@@ -677,12 +774,16 @@
 
   /* ---------- controls ---------- */
   $('pauseBtn').onclick = togglePause;
-  $('skipBtn').onclick = advance;
+  $('skipBtn').onclick = skip;
+  $('ilStart').onclick = function () { endInterlude(true); };
   $('stopBtn').onclick = function () { if (addState) endAdd(false); else stop(); };
   $('fsBtn').onclick = toggleFullscreen;
   $('clearBtn').onclick = function () { queue = []; drawQueue(); };
   $('resume').onclick = function () { $('resume').hidden = true; inst.playVideo(); };
   $('vol').oninput = function () { setVolume(+this.value); };
+  $('gap').onchange = function () {
+    try { localStorage.setItem(GAP_KEY, this.value); } catch (err) {}
+  };
   $('search').oninput = drawList;
   $('search').onkeydown = function (e) {
     if (e.key === 'Escape') { this.value = ''; drawList(); this.blur(); }
@@ -741,12 +842,13 @@
   };
 
   document.addEventListener('keydown', function (e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
+        e.target.tagName === 'SELECT') return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {
       case ' ':           e.preventDefault(); togglePause(); break;
-      case 'Escape':      if (addState) endAdd(false); else if (current) stop(); break;
-      case 'n': case 'N': if (!addState && (current || queue.length)) advance(); break;
+      case 'Escape':      if (addState) endAdd(false); else if (current || ilSong) stop(); break;
+      case 'n': case 'N': if (!addState && (current || ilSong || queue.length)) skip(); break;
       case 'ArrowUp':     e.preventDefault(); setVolume(+$('vol').value + 5); break;
       case 'ArrowDown':   e.preventDefault(); setVolume(+$('vol').value - 5); break;
       case 't': case 'T': $('tuneBtn').click(); break;
@@ -761,6 +863,8 @@
   try {
     var savedVol = localStorage.getItem(VOL_KEY);
     if (savedVol !== null) $('vol').value = savedVol;
+    var savedGap = localStorage.getItem(GAP_KEY);
+    if (savedGap !== null) $('gap').value = savedGap;
   } catch (err) {}
   setVolume(+$('vol').value);
   loadTweaks();
