@@ -64,7 +64,17 @@
       <button class="nudge" data-n="-0.1">−0.1s</button>
       <button class="nudge" data-n="0.1">+0.1s</button>
       <button class="nudge" data-n="0.5">+0.5s</button>
-      <button id="resetBtn" disabled>Reset offset</button>
+      <button id="resetBtn" disabled>Reset to songs.js</button>
+
+      <div id="vidEdit" hidden>
+        <label for="eLyric">Lyric video</label>
+        <input class="field" id="eLyric" type="text" placeholder="URL or ID" autocomplete="off">
+        <label for="eInst">Instrumental</label>
+        <input class="field" id="eInst" type="text" placeholder="URL or ID" autocomplete="off">
+        <button class="go" id="applyVid" disabled>Apply and restart song</button>
+        <div class="stat" id="eStat"></div>
+      </div>
+
       <div style="margin-top:10px">
         <button id="copyBtn">Copy songs.js</button>
         <button id="dlBtn">Download songs.js</button>
@@ -148,7 +158,7 @@
   var VOL_KEY   = 'karaoke.volume';
   var GAP_KEY   = 'karaoke.gap';
   var MINE_KEY  = 'karaoke.mysongs';
-  var TWEAK_KEY = 'karaoke.tweaks';
+  var OVR_KEY   = 'karaoke.tweaks';   // now holds {offset, lyricId, instId} per song
 
   var HEADER =
     '/* Songbook.\n' +
@@ -168,11 +178,17 @@
   var ilFade = null, ilSeekWait = null, ilFadingOut = false, ilPlaying = false;
 
   var mine = [], BOOK = [], mineKeys = {};
-  var tweaks = {}, ORIGINAL = {};
+  var overrides = {}, ORIGINAL = {};
   var addState = null, draft = null, tapL = 0, tapI = 0;
 
   var $ = function (id) { return document.getElementById(id); };
-  function songKey(s) { return s.lyricId + '|' + s.instId; }
+
+  // A song's identity is fixed the first time we see it, so swapping a video
+  // ID later doesn't orphan its overrides or its place in a saved queue.
+  function songKey(s) {
+    if (!s._key) s._key = s.lyricId + '|' + s.instId;
+    return s._key;
+  }
   function esc(t) { return String(t == null ? '' : t)
     .replace(/[<>&]/g, function (c) { return { '<':'&lt;', '>':'&gt;', '&':'&amp;' }[c]; }); }
   function fmt(sec) {
@@ -244,22 +260,43 @@
     openTuner();
   }
 
-  /* ---------- offsets tweaked on this device ---------- */
-  function loadTweaks() {
-    try { tweaks = JSON.parse(localStorage.getItem(TWEAK_KEY) || '{}') || {}; }
-    catch (err) { tweaks = {}; }
-    SONGS.forEach(function (s) { ORIGINAL[songKey(s)] = s.offset; });
-    Object.keys(tweaks).forEach(function (k) {
-      if (ORIGINAL[k] === tweaks[k]) delete tweaks[k];
+  /* ---------- local edits to committed songs ---------- */
+  function loadOverrides() {
+    var raw = {};
+    try { raw = JSON.parse(localStorage.getItem(OVR_KEY) || '{}') || {}; } catch (err) { raw = {}; }
+
+    // Snapshot songs.js before anything mutates it - this is what Reset returns to.
+    SONGS.forEach(function (s) {
+      ORIGINAL[songKey(s)] = { offset: s.offset, lyricId: s.lyricId, instId: s.instId };
     });
-    saveTweaks();
+
+    overrides = {};
+    Object.keys(raw).forEach(function (k) {
+      if (!ORIGINAL[k]) return;                       // orphan: songs.js has moved on
+      var v = raw[k];
+      if (typeof v === 'number') v = { offset: v };   // migrate the old offset-only format
+      if (!v || typeof v !== 'object') return;
+      var o = ORIGINAL[k], keep = {};
+      if (typeof v.offset === 'number' && v.offset !== o.offset) keep.offset = v.offset;
+      if (v.lyricId && v.lyricId !== o.lyricId) keep.lyricId = v.lyricId;
+      if (v.instId && v.instId !== o.instId) keep.instId = v.instId;
+      if (Object.keys(keep).length) overrides[k] = keep;
+    });
+    saveOverrides();
   }
-  function saveTweaks() {
-    try { localStorage.setItem(TWEAK_KEY, JSON.stringify(tweaks)); } catch (err) {}
+  function saveOverrides() {
+    try { localStorage.setItem(OVR_KEY, JSON.stringify(overrides)); } catch (err) {}
   }
-  function noteTweak(song) {
-    tweaks[songKey(song)] = song.offset;
-    saveTweaks();
+  // Records only what differs from songs.js, so an edit that undoes itself vanishes.
+  function noteOverride(song) {
+    var k = songKey(song), o = ORIGINAL[k];
+    if (!o) return;
+    var keep = {};
+    if (song.offset !== o.offset) keep.offset = song.offset;
+    if (song.lyricId !== o.lyricId) keep.lyricId = song.lyricId;
+    if (song.instId !== o.instId) keep.instId = song.instId;
+    if (Object.keys(keep).length) overrides[k] = keep; else delete overrides[k];
+    saveOverrides();
   }
 
   /* ---------- the book ---------- */
@@ -272,7 +309,15 @@
     saveMine();
   }
   function saveMine() {
-    try { localStorage.setItem(MINE_KEY, JSON.stringify(mine)); } catch (err) {}
+    try {
+      localStorage.setItem(MINE_KEY, JSON.stringify(mine.map(function (s) {
+        var o = { title: s.title, artist: s.artist || '',
+                  lyricId: s.lyricId, instId: s.instId, offset: s.offset };
+        if (s.end) o.end = s.end;
+        if (s.note) o.note = s.note;
+        return o;                       // _key is derived, never stored
+      })));
+    } catch (err) {}
     rebuildBook();
   }
   function rebuildBook() {
@@ -292,15 +337,21 @@
       if (!seen[k]) { seen[k] = true; mineKeys[k] = true; BOOK.push(s); }
     });
 
+    // Local songs carry their own values; committed ones get the override layered on.
     BOOK.forEach(function (s) {
-      var t = tweaks[songKey(s)];
-      if (typeof t === 'number') s.offset = t;
+      var k = songKey(s);
+      if (mineKeys[k]) return;
+      var o = overrides[k];
+      if (!o) return;
+      if (typeof o.offset === 'number') s.offset = o.offset;
+      if (o.lyricId) s.lyricId = o.lyricId;
+      if (o.instId) s.instId = o.instId;
     });
 
-    var n = mine.length, t = Object.keys(tweaks).length;
+    var n = mine.length, t = Object.keys(overrides).length;
     var bits = [];
     if (n) bits.push(n + (n === 1 ? ' new song' : ' new songs'));
-    if (t) bits.push(t + (t === 1 ? ' retimed song' : ' retimed songs'));
+    if (t) bits.push(t + (t === 1 ? ' edited song' : ' edited songs'));
     $('unsaved').hidden = bits.length === 0;
     $('unsaved').textContent = bits.join(' and ') +
       ' only on this device. Copy or download songs.js and commit it.';
@@ -348,11 +399,13 @@
     });
     $('noMatch').hidden = matches.length > 0;
     matches.forEach(function (song) {
-      var k = songKey(song);
+      var k = songKey(song), o = overrides[k];
+      var mark = '';
+      if (mineKeys[k]) mark = '<span class="badge">unsaved</span>';
+      else if (o) mark = '<span class="badge t">' +
+        (o.lyricId || o.instId ? 'swapped' : 'retimed') + '</span>';
       var li = document.createElement('li'), b = document.createElement('button');
-      b.innerHTML = '<strong>' + esc(song.title) + '</strong>' +
-        (mineKeys[k] ? '<span class="badge">unsaved</span>' : '') +
-        (tweaks[k] !== undefined ? '<span class="badge t">retimed</span>' : '') +
+      b.innerHTML = '<strong>' + esc(song.title) + '</strong>' + mark +
         '<div class="artist">' + esc(song.artist) + '</div>';
       b.onclick = function () { enqueue(song); };
       li.appendChild(b); el.appendChild(li);
@@ -552,7 +605,7 @@
     $('resume').hidden = true;
     $('progFill').style.width = '0%';
     $('progTime').textContent = '0:00';
-    refreshResetBtn();
+    refreshEditor();
 
     lyric.mute();                       // the outro left it unmuted
     lyric.setVolume(+$('vol').value);
@@ -624,7 +677,7 @@
     $('readout').textContent = '';
     $('progFill').style.width = '0%';
     $('progTime').textContent = '—';
-    refreshResetBtn();
+    refreshEditor();
     drawQueue();
   }
 
@@ -685,21 +738,20 @@
     else p.playVideo();
   }
 
+  // Writes through to wherever the song lives: local storage, or an override.
+  function persistCurrent() {
+    if (!current || addState === 'review') return;   // a draft isn't in the book yet
+    if (mineKeys[songKey(current)]) saveMine(); else noteOverride(current);
+    refreshEditor();
+    drawList();
+  }
+
   function applyNudge(d) {
     if (!current) return;
     current.offset = +(current.offset - d).toFixed(2);
-    if (addState !== 'review') {
-      if (mineKeys[songKey(current)]) saveMine();
-      else noteTweak(current);
-      refreshResetBtn();
-      drawList();
-    }
+    persistCurrent();
     if (!instStarted || !lyricStarted) return;
     try { lyric.seekTo(inst.getCurrentTime() - current.offset, true); } catch (err) {}
-  }
-
-  function refreshResetBtn() {
-    $('resetBtn').disabled = !(current && tweaks[songKey(current)] !== undefined);
   }
 
   function setVolume(v) {
@@ -713,7 +765,7 @@
     try { localStorage.setItem(VOL_KEY, v); } catch (err) {}
   }
   function closeTuner() { $('tuner').hidden = true; $('tuneBtn').classList.remove('is-open'); }
-  function openTuner() { $('tuner').hidden = false; $('tuneBtn').classList.add('is-open'); }
+  function openTuner() { $('tuner').hidden = false; $('tuneBtn').classList.add('is-open'); refreshEditor(); }
   function showOsd(title, sub) {
     $('osd').innerHTML = '<div>' + esc(title) + '</div>' +
                          (sub ? '<div class="sub">' + esc(sub) + '</div>' : '');
@@ -728,6 +780,51 @@
     } else {
       (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
     }
+  }
+
+  /* ---------- swapping a song's videos ---------- */
+  function refreshEditor() {
+    var on = !!current;
+    $('vidEdit').hidden = !on;
+    $('resetBtn').disabled = !(on && overrides[songKey(current)]);
+    if (!on) return;
+    // Don't stomp on something half-typed.
+    if (document.activeElement !== $('eLyric')) $('eLyric').value = current.lyricId;
+    if (document.activeElement !== $('eInst'))  $('eInst').value  = current.instId;
+    checkEditor();
+  }
+
+  function checkEditor() {
+    if (!current) return;
+    var l = parseId($('eLyric').value), i = parseId($('eInst').value);
+    var msgs = [];
+    if ($('eLyric').value.trim() && !l) msgs.push('Lyric link not recognised.');
+    if ($('eInst').value.trim() && !i) msgs.push('Instrumental link not recognised.');
+    if (l && i && l === i) msgs.push('Both are the same video.');
+    var changed = l && i && (l !== current.lyricId || i !== current.instId);
+    $('applyVid').disabled = !(changed && !msgs.length);
+    if (msgs.length) $('eStat').textContent = msgs.join(' ');
+    else if (!changed) $('eStat').textContent = '';
+    else $('eStat').textContent = 'Applying restarts the song.';
+  }
+
+  function applyVideoEdit() {
+    if (!current) return;
+    var l = parseId($('eLyric').value), i = parseId($('eInst').value);
+    if (!l || !i || l === i) return;
+    var lyricChanged = (l !== current.lyricId);
+
+    current.lyricId = l;
+    current.instId = i;
+    // A local song's stored record IS the truth, so its identity moves with it.
+    if (mineKeys[songKey(current)]) current._key = l + '|' + i;
+    persistCurrent();
+
+    play(current);
+    $('eStat').textContent = lyricChanged
+      ? 'Swapped. The offset almost certainly needs re-tuning.'
+      : 'Swapped. Check the timing still holds.';
+    openTuner();
   }
 
   /* ---------- add a song ---------- */
@@ -853,6 +950,8 @@
     if (e.key === 'Escape') { this.value = ''; drawList(); this.blur(); }
   };
   $('tuneBtn').onclick = function () { if ($('tuner').hidden) openTuner(); else closeTuner(); };
+  $('eLyric').oninput = $('eInst').oninput = checkEditor;
+  $('applyVid').onclick = applyVideoEdit;
   document.addEventListener('fullscreenchange', function () {
     $('fsBtn').textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
   });
@@ -862,17 +961,17 @@
 
   $('resetBtn').onclick = function () {
     if (!current) return;
-    var k = songKey(current);
-    if (tweaks[k] === undefined) return;
-    if (typeof ORIGINAL[k] === 'number') current.offset = ORIGINAL[k];
-    delete tweaks[k];
-    saveTweaks();
+    var k = songKey(current), o = ORIGINAL[k];
+    if (!overrides[k] || !o) return;
+    current.offset = o.offset;
+    current.lyricId = o.lyricId;
+    current.instId = o.instId;
+    delete overrides[k];
+    saveOverrides();
     rebuildBook();
-    refreshResetBtn();
+    refreshEditor();
     drawList();
-    if (instStarted && lyricStarted) {
-      try { lyric.seekTo(inst.getCurrentTime() - current.offset, true); } catch (err) {}
-    }
+    play(current);
   };
 
   $('copyBtn').onclick = function () {
@@ -892,17 +991,19 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   };
   $('forgetBtn').onclick = function () {
-    var n = mine.length, t = Object.keys(tweaks).length;
+    var n = mine.length, t = Object.keys(overrides).length;
     if (!n && !t) return;
-    if (!window.confirm('Discard ' + n + ' added song(s) and ' + t + ' offset change(s) ' +
+    if (!window.confirm('Discard ' + n + ' added song(s) and ' + t + ' edit(s) ' +
                         'made on this device? songs.js itself is unaffected.')) return;
-    mine = []; tweaks = {};
-    saveTweaks();
+    mine = []; overrides = {};
+    saveOverrides();
     SONGS.forEach(function (s) {
-      if (typeof ORIGINAL[songKey(s)] === 'number') s.offset = ORIGINAL[songKey(s)];
+      var o = ORIGINAL[songKey(s)];
+      if (!o) return;
+      s.offset = o.offset; s.lyricId = o.lyricId; s.instId = o.instId;
     });
     saveMine();
-    drawList(); refreshResetBtn();
+    drawList(); refreshEditor();
   };
 
   document.addEventListener('keydown', function (e) {
@@ -931,7 +1032,7 @@
     if (savedGap !== null) $('gap').value = savedGap;
   } catch (err) {}
   setVolume(+$('vol').value);
-  loadTweaks();
+  loadOverrides();
   loadMine();
   restoreQueue();
   checkForm();
