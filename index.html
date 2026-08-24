@@ -140,7 +140,7 @@
   var LRC_API   = 'https://lrclib.net/api';
   var OUTRO_AT  = 0.25;     // fraction into the outgoing video - roughly a chorus
   var FADE_IN_MS = 900, FADE_OUT_MS = 1400;
-  var COUNTIN_S = 5;        // show dots this long before a line after a gap
+  var COUNTIN_S = 5;        // dots appear this long before a line follows a gap
   var WIPE_CAP  = 8;        // never spread a wipe over more than this many seconds
 
   var QUEUE_KEY = 'karaoke.queue';
@@ -374,7 +374,9 @@
         setLines('<span class="lyDots">' + new Array(dots + 1).join('•') + '</span>',
                  nxt.text, 0, true);
       } else {
-        setLines('', nxt.text);
+        // Hold everything back until the count-in, so a long intro doesn't
+        // park the first line on screen for a minute.
+        setLines('', '');
       }
     } else {
       setLines('', '');
@@ -394,7 +396,9 @@
       $('lyNext').textContent = next || '';
       fitLine($('lyNext'));
     }
-    $('lyNow').lastChild.style.width = ((pct || 0) * 100).toFixed(2) + '%';
+    // Negative top/bottom insets so descenders aren't clipped mid-wipe.
+    $('lyNow').lastChild.style.clipPath =
+      'inset(-0.4em ' + (100 - (pct || 0) * 100).toFixed(2) + '% -0.4em 0)';
   }
 
   // Lines are kept on one row; shrink anything too wide for the screen.
