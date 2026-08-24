@@ -118,3 +118,19 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; background: #262452
   #progFill { transition: none; }
   #osd { transition: none; }
 }
+
+/* ---------- interlude ---------- */
+#interlude { position: absolute; inset: 0; z-index: 5; display: none;
+             flex-direction: column; align-items: center; justify-content: center;
+             text-align: center; padding: 24px; background: #0b0b1c; }
+#interlude.on { display: flex; }
+#ilKicker { font-size: 12px; letter-spacing: .2em; text-transform: uppercase; color: #7b78d0; }
+#ilTitle { font-size: clamp(24px, 5vw, 44px); font-weight: 700; margin: 10px 0 4px; line-height: 1.1; }
+#ilArtist { color: #9a97c4; font-size: 16px; }
+#ilCount { margin: 20px 0 14px; font-family: ui-monospace, monospace;
+           font-size: 44px; color: #f0b429; line-height: 1; }
+#ilStart { padding: 14px 26px; font-size: 16px; margin: 0; }
+#ilThen { color: #6f6c9c; font-size: 13px; margin-top: 16px; }
+
+.vol select { background: #0b0b1c; color: #eceafa; border: 1px solid #3a3770;
+              border-radius: 3px; padding: 5px 6px; font: inherit; font-size: 13px; }
