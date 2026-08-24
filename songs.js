@@ -1,30 +1,43 @@
 /* Songbook.
-   offset = how much later the first sung word lands in the instrumental
-   than in the lyric video, in seconds. Positive: the instrumental has the
-   longer intro and starts first. Negative: the lyric video starts first.
-   Both videos always play from their own beginning; nothing is trimmed.
-   end (optional): seconds into the instrumental to stop at. */
+   videoId : the YouTube video. It plays with sound and is the backdrop.
+   lrcId   : the LRCLIB record id for the synced lyrics.
+   offset  : seconds to shift the lyrics by. Positive = later.
+   end     : optional, seconds into the video to stop at. */
 
 var SONGS = [
   {
     "title": "Polaroid Love",
     "artist": "ENHYPEN",
-    "lyricId": "zVg4HIFVQ2U",
-    "instId": "7PvV7EgO__0",
-    "offset": -0.7
+    "videoId": "7PvV7EgO__0",
+    "lrcId": "35430217",
+    "offset": 0
   },
   {
     "title": "7 Rings",
     "artist": "Ariana Grande",
-    "lyricId": "uDAjINEp8H8",
-    "instId": "QYh6mYIJG2Y",
-    "offset": 0.5
+    "videoId": "QYh6mYIJG2Y",
+    "lrcId": "36854307",
+    "offset": 0
   },
   {
     "title": "Lush Life",
     "artist": "Zara Larsson",
-    "lyricId": "ElspqCcCpvY",
-    "instId": "tD4HCZe-tew",
-    "offset": 1.3
+    "videoId": "tD4HCZe-tew",
+    "lrcId": "35045222",
+    "offset": 0
+  },
+  {
+    "title": "2002",
+    "artist": "Anne-Marie",
+    "videoId": "Il-an3K9pjg",
+    "lrcId": "29253958",
+    "offset": 0
+  },
+  {
+    "title": "24K Magic",
+    "artist": "Bruno Mars",
+    "videoId": "UqyT8IEBkvY",
+    "lrcId": "36891458",
+    "offset": 0
   }
 ];
