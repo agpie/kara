@@ -136,3 +136,9 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; background: #262452
   #progFill { transition: none; }
   #osd { transition: none; }
 }
+
+/* ---------- video swap ---------- */
+#vidEdit { margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2850; }
+#vidEdit label { display: block; font-size: 11px; text-transform: uppercase;
+                 letter-spacing: .1em; color: #9a97c4; margin: 0 0 3px; }
+#vidEdit .field { margin-bottom: 8px; font-size: 13px; }
