@@ -16,13 +16,31 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em;
         text-align: center; color: #6f6c9c; font-size: 15px; padding: 20px; }
 #screen:fullscreen { aspect-ratio: auto; width: 100%; height: 100%; border-radius: 0; }
 
-/* Instrumental player: always rendered so the browser never throttles it,
-   but invisible - except during its capture step in the add flow. */
-#instHost { position: absolute; left: 0; bottom: 0; width: 200px; height: 112px;
-            opacity: .001; pointer-events: none; z-index: 1; }
-#instHost.is-capturing { inset: 0; width: 100%; height: 100%; opacity: 1; z-index: 3; }
+/* ---------- lyrics: bottom third, over the video ---------- */
+#lyrics { position: absolute; left: 0; right: 0; bottom: 0; height: 34%; z-index: 3;
+          display: flex; flex-direction: column; align-items: center;
+          justify-content: center; gap: 10px; padding: 0 4%;
+          pointer-events: none; overflow: hidden;
+          background: linear-gradient(to top,
+            rgba(6,6,18,.94) 0%, rgba(6,6,18,.78) 55%, rgba(6,6,18,0) 100%); }
+#lyrics[hidden] { display: none !important; }
 
-#osd { position: absolute; left: 20px; bottom: 20px; max-width: 70%; z-index: 4;
+.lyLine { position: relative; white-space: nowrap; text-align: center;
+          line-height: 1.16; transform-origin: center center; max-width: 100%; }
+
+#lyNow { font-size: clamp(20px, 4.4vw, 46px); font-weight: 800; letter-spacing: .005em; }
+#lyNow .base { color: rgba(236,234,250,.40); text-shadow: 0 2px 12px rgba(0,0,0,.95); }
+#lyNow .fill { position: absolute; left: 0; top: 0; height: 100%; width: 0;
+               overflow: hidden; color: #f0b429; text-shadow: 0 2px 12px rgba(0,0,0,.95); }
+
+#lyNext { font-size: clamp(13px, 2.5vw, 24px); font-weight: 600;
+          color: rgba(185,182,240,.82); text-shadow: 0 2px 10px rgba(0,0,0,.9); }
+
+.lyDots { letter-spacing: .4em; color: #f0b429; }
+#lyMsg { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center;
+         font-size: 12px; color: #6f6c9c; }
+
+#osd { position: absolute; left: 20px; top: 20px; max-width: 70%; z-index: 4;
        padding: 10px 16px; background: rgba(11,11,28,.82); border-radius: 4px;
        font-size: 18px; font-weight: 600; opacity: 0; transition: opacity .4s;
        pointer-events: none; }
@@ -30,7 +48,6 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em;
 #osd .sub { font-size: 13px; font-weight: 400; color: #9a97c4; margin-top: 2px; }
 
 /* ---------- interlude ---------- */
-/* Translucent, so the outgoing song's video shows through behind the card. */
 #interlude { position: absolute; inset: 0; z-index: 5; display: none;
              flex-direction: column; align-items: center; justify-content: center;
              text-align: center; padding: 24px; background: rgba(11,11,28,.62); }
@@ -83,8 +100,13 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 #tuner { margin-top: 12px; padding: 12px; background: #0b0b1c; border-radius: 4px; }
 #tuner button { padding: 6px 10px; font-size: 13px; }
 #readout { font-family: ui-monospace, monospace; font-size: 12px;
-           white-space: pre; color: #9a97c4; margin-top: 8px; }
+           white-space: pre-wrap; color: #9a97c4; margin-top: 8px; }
 #unsaved { color: #f0b429; font-size: 13px; margin-top: 10px; }
+
+#vidEdit { margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2850; }
+#vidEdit label { display: block; font-size: 11px; text-transform: uppercase;
+                 letter-spacing: .1em; color: #9a97c4; margin: 0 0 3px; }
+#vidEdit .field { margin-bottom: 8px; font-size: 13px; }
 
 #keyhelp { color: #6f6c9c; font-size: 12px; margin-top: 12px; line-height: 2; }
 kbd { font-family: ui-monospace, monospace; font-size: 11px; background: #262452;
@@ -114,12 +136,12 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; background: #262452
          text-transform: uppercase; color: #f0b429; border: 1px solid #6b5417;
          border-radius: 2px; padding: 0 4px; margin-left: 6px; vertical-align: 2px; }
 .badge.t { color: #7bd0c4; border-color: #1f5c55; }
+.badge.x { color: #ff9a9a; border-color: #7a2b2b; }
 
 /* ---------- add a song ---------- */
 #addPanel { margin-top: 18px; padding-top: 14px; border-top: 1px solid #2a2850; }
 .step { display: none; }
 .step.on { display: block; }
-.tap { width: 100%; padding: 18px; font-size: 16px; border-color: #7b78d0; background: #34317a; }
 .hintline { color: #6f6c9c; font-size: 13px; line-height: 1.5; margin: 0 0 10px; }
 .stat { font-family: ui-monospace, monospace; font-size: 12px; color: #9a97c4; margin: 8px 0; }
 .stat b { color: #eceafa; }
@@ -136,9 +158,3 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; background: #262452
   #progFill { transition: none; }
   #osd { transition: none; }
 }
-
-/* ---------- video swap ---------- */
-#vidEdit { margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a2850; }
-#vidEdit label { display: block; font-size: 11px; text-transform: uppercase;
-                 letter-spacing: .1em; color: #9a97c4; margin: 0 0 3px; }
-#vidEdit .field { margin-bottom: 8px; font-size: 13px; }
