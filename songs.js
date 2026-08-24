@@ -11,20 +11,20 @@ var SONGS = [
     "artist": "ENHYPEN",
     "lyricId": "zVg4HIFVQ2U",
     "instId": "7PvV7EgO__0",
-    "offset": -1.5
+    "offset": -0.7
   },
   {
     "title": "7 Rings",
     "artist": "Ariana Grande",
     "lyricId": "uDAjINEp8H8",
-    "instId": "M84fFXooS5w",
-    "offset": 0
+    "instId": "QYh6mYIJG2Y",
+    "offset": 0.5
   },
   {
     "title": "Lush Life",
     "artist": "Zara Larsson",
-    "lyricId": "aAXLhvrfaT8",
+    "lyricId": "ElspqCcCpvY",
     "instId": "tD4HCZe-tew",
-    "offset": 1.28
+    "offset": 1.3
   }
 ];
